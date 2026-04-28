@@ -6,9 +6,16 @@ type Props = {
   selectedAssetId: string | null;
   onImport: () => Promise<void>;
   onSelect: (assetId: string) => void;
+  importError: string | null;
 };
 
-export function MediaLibraryScreen({ assets, selectedAssetId, onImport, onSelect }: Props) {
+export function MediaLibraryScreen({
+  assets,
+  selectedAssetId,
+  onImport,
+  onSelect,
+  importError
+}: Props) {
   return (
     <section className="card stack">
       <header className="section-header">
@@ -34,6 +41,7 @@ export function MediaLibraryScreen({ assets, selectedAssetId, onImport, onSelect
           </li>
         ))}
       </ul>
+      {importError ? <p className="error-text">{importError}</p> : null}
     </section>
   );
 }

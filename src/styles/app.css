@@ -198,10 +198,19 @@ p {
   color: #fff9ef;
   display: grid;
   gap: 8px;
+  justify-items: center;
 }
 
 .overlay__hud h3 {
   font-size: clamp(2rem, 6vw, 4rem);
+}
+
+.overlay__dismiss {
+  margin-top: 8px;
+}
+
+.error-text {
+  color: #a23f39;
 }
 
 @media (max-width: 720px) {

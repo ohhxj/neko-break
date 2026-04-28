@@ -1,10 +1,15 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { emitTo } from "@tauri-apps/api/event";
+import { open } from "@tauri-apps/plugin-dialog";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { createSettingsStore } from "../domain/settings/store";
 import { defaultSettings } from "../domain/settings/defaults";
 import type { AppSettings } from "../domain/settings/types";
 import type { MediaAsset } from "../domain/media/types";
-import type { SchedulerSnapshot } from "../domain/breaks/types";
+import type { OverlayPayload, SchedulerSnapshot } from "../domain/breaks/types";
+import { createMediaStore } from "../domain/media/store";
+import { mergeAssets, presetAssets } from "../domain/media/presets";
 import { createRouterSnapshot } from "./router";
 import { SetupScreen } from "../features/setup/SetupScreen";
 import { DashboardScreen } from "../features/dashboard/DashboardScreen";
@@ -14,6 +19,8 @@ import { BreakOverlay } from "../features/overlay/BreakOverlay";
 import { statusLabel } from "../features/menu-bar/status";
 
 const settingsStore = createSettingsStore(invoke);
+const mediaStore = createMediaStore(invoke);
+const currentWindowLabel = getCurrentWindow().label;
 
 const initialScheduler: SchedulerSnapshot = {
   state: "idle",
@@ -22,35 +29,47 @@ const initialScheduler: SchedulerSnapshot = {
   activeBreakSeconds: defaultSettings.breakMinutes * 60
 };
 
-const demoAssets: MediaAsset[] = [
-  {
-    id: "preset-neko",
-    name: "Preset Neko",
-    filePath: "",
-    format: "webm_alpha",
-    durationSeconds: 8,
-    hasTransparency: true,
-    enabled: true,
-    builtIn: true,
-    copyTheme: "Stretch and breathe."
-  }
-];
-
 export function App() {
   const [settings, setSettings] = useState<AppSettings | null>(null);
-  const [assets, setAssets] = useState<MediaAsset[]>(demoAssets);
+  const [assets, setAssets] = useState<MediaAsset[]>(presetAssets);
   const [scheduler, setScheduler] = useState<SchedulerSnapshot>(initialScheduler);
   const [setupComplete, setSetupComplete] = useState(false);
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [overlayPayload, setOverlayPayload] = useState<OverlayPayload>({
+    asset: null,
+    remainingSeconds: 5 * 60,
+    message: "Look away from the screen and take a breath."
+  });
 
   useEffect(() => {
-    void settingsStore.load().then((loaded) => {
-      setSettings(loaded);
-      setSelectedAssetId(loaded.defaultAssetId);
-      setSetupComplete(Boolean(loaded.defaultAssetId));
-    }).catch(() => {
-      setSettings(defaultSettings);
-    });
+    void Promise.all([settingsStore.load(), mediaStore.load()])
+      .then(([loadedSettings, loadedAssets]) => {
+        setSettings(loadedSettings);
+        setAssets(mergeAssets(presetAssets, loadedAssets));
+        setSelectedAssetId(loadedSettings.defaultAssetId);
+        setSetupComplete(Boolean(loadedSettings.defaultAssetId));
+      })
+      .catch(() => {
+        setSettings(defaultSettings);
+        setAssets(presetAssets);
+      });
+  }, []);
+
+  useEffect(() => {
+    if (currentWindowLabel !== "overlay") return;
+    let unlisten: (() => void) | undefined;
+    void getCurrentWindow()
+      .listen<OverlayPayload>("break-preview", (event) => {
+        setOverlayPayload(event.payload);
+      })
+      .then((cleanup) => {
+        unlisten = cleanup;
+      });
+
+    return () => {
+      unlisten?.();
+    };
   }, []);
 
   if (!settings) {
@@ -59,6 +78,18 @@ export function App() {
 
   const selectedAsset =
     assets.find((asset) => asset.id === (selectedAssetId ?? settings.defaultAssetId)) ?? null;
+
+  if (currentWindowLabel === "overlay") {
+    return (
+      <BreakOverlay
+        asset={overlayPayload.asset}
+        remainingSeconds={overlayPayload.remainingSeconds}
+        message={overlayPayload.message}
+        dismissible
+      />
+    );
+  }
+
   const route = createRouterSnapshot(setupComplete);
 
   return (
@@ -93,6 +124,24 @@ export function App() {
           <DashboardScreen
             settings={settings}
             scheduler={scheduler}
+            onStartBreak={() => {
+              const payload: OverlayPayload = {
+                asset: selectedAsset,
+                remainingSeconds: settings.breakMinutes * 60,
+                message:
+                  selectedAsset?.copyTheme ?? "Look away from the screen and take a breath."
+              };
+              setOverlayPayload(payload);
+              setScheduler((current) => ({
+                ...current,
+                state: "break_active",
+                remainingSeconds: payload.remainingSeconds,
+                activeBreakSeconds: payload.remainingSeconds
+              }));
+              void emitTo("overlay", "break-preview", payload)
+                .then(() => invoke("show_overlay"))
+                .catch(() => undefined);
+            }}
             onDelay={() =>
               setScheduler((current) => ({
                 ...current,
@@ -120,23 +169,34 @@ export function App() {
             assets={assets}
             selectedAssetId={selectedAssetId}
             onImport={async () => {
-              const imported: MediaAsset = {
-                id: `asset-${assets.length + 1}`,
-                name: `Imported Asset ${assets.length}`,
-                filePath: "/tmp/sample.webm",
-                format: "webm_alpha",
-                durationSeconds: 6,
-                hasTransparency: true,
-                enabled: true,
-                builtIn: false,
-                copyTheme: "Time for a tiny pause."
-              };
-              setAssets((current) => [...current, imported]);
+              setImportError(null);
+              const selected = await open({
+                multiple: false,
+                directory: false,
+                filters: [
+                  {
+                    name: "Transparent Video",
+                    extensions: ["webm", "mov"]
+                  }
+                ]
+              });
+              if (!selected || Array.isArray(selected)) return;
+              try {
+                const imported = await mediaStore.import(selected);
+                setAssets((current) => mergeAssets(current, [imported]));
+              } catch (error) {
+                setImportError(
+                  error instanceof Error
+                    ? error.message
+                    : "Import failed. Try a transparent WebM or MOV file."
+                );
+              }
             }}
             onSelect={(assetId) => {
               setSelectedAssetId(assetId);
               void settingsStore.save({ ...settings, defaultAssetId: assetId }).then(setSettings);
             }}
+            importError={importError}
           />
         </div>
       )}

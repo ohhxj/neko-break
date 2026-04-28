@@ -1,11 +1,14 @@
+import { convertFileSrc, invoke, isTauri } from "@tauri-apps/api/core";
 import type { MediaAsset } from "../../domain/media/types";
 import { useBreakOverlay } from "./useBreakOverlay";
+import { useEffect, useRef } from "react";
 
 type Props = {
   asset: MediaAsset | null;
   remainingSeconds: number;
   message: string;
   preview?: boolean;
+  dismissible?: boolean;
 };
 
 const formatClock = (seconds: number) => {
@@ -14,8 +17,33 @@ const formatClock = (seconds: number) => {
   return `${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`;
 };
 
-export function BreakOverlay({ asset, remainingSeconds, message, preview = false }: Props) {
+const toMediaUrl = (filePath: string) => {
+  if (!filePath) return "";
+  if (filePath.startsWith("/") && isTauri()) {
+    return convertFileSrc(filePath);
+  }
+  return filePath;
+};
+
+export function BreakOverlay({
+  asset,
+  remainingSeconds,
+  message,
+  preview = false,
+  dismissible = false
+}: Props) {
   const liveSeconds = useBreakOverlay(remainingSeconds);
+  const completionHandled = useRef(false);
+
+  useEffect(() => {
+    if (preview || completionHandled.current || liveSeconds > 0) return;
+    completionHandled.current = true;
+    void invoke("hide_overlay").catch(() => undefined);
+  }, [liveSeconds, preview]);
+
+  useEffect(() => {
+    completionHandled.current = false;
+  }, [remainingSeconds]);
 
   return (
     <div className={preview ? "overlay overlay--preview" : "overlay"}>
@@ -23,7 +51,7 @@ export function BreakOverlay({ asset, remainingSeconds, message, preview = false
       <div className="overlay__media">
         {asset ? (
           asset.filePath ? (
-            <video src={asset.filePath} autoPlay loop muted playsInline />
+            <video src={toMediaUrl(asset.filePath)} autoPlay loop muted playsInline />
           ) : (
             <div className="overlay__placeholder">{asset.name}</div>
           )
@@ -34,6 +62,15 @@ export function BreakOverlay({ asset, remainingSeconds, message, preview = false
       <div className="overlay__hud">
         <p>{message}</p>
         <h3>{formatClock(liveSeconds)}</h3>
+        {dismissible ? (
+          <button
+            type="button"
+            className="secondary overlay__dismiss"
+            onClick={() => void invoke("hide_overlay").catch(() => undefined)}
+          >
+            End break
+          </button>
+        ) : null}
       </div>
     </div>
   );

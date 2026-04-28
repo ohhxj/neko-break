@@ -1,3 +1,5 @@
+import type { MediaAsset } from "../media/types";
+
 export type BreakState =
   | "idle"
   | "counting"
@@ -10,4 +12,10 @@ export type SchedulerSnapshot = {
   nextBreakAt: string | null;
   remainingSeconds: number;
   activeBreakSeconds: number;
+};
+
+export type OverlayPayload = {
+  asset: MediaAsset | null;
+  remainingSeconds: number;
+  message: string;
 };

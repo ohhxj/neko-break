@@ -11,7 +11,7 @@ fn media_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     Ok(base.join("media-library.json"))
 }
 
-async fn load_all(app: &tauri::AppHandle) -> Result<Vec<MediaAsset>, String> {
+pub async fn load_all(app: &tauri::AppHandle) -> Result<Vec<MediaAsset>, String> {
     let path = media_path(app)?;
     match fs::read_to_string(path).await {
         Ok(contents) => serde_json::from_str(&contents).map_err(|error| error.to_string()),
