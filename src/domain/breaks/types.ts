@@ -1,4 +1,5 @@
 import type { MediaAsset } from "../media/types";
+import type { OverlayStyle } from "../settings/types";
 
 export type BreakState =
   | "idle"
@@ -18,4 +19,8 @@ export type OverlayPayload = {
   asset: MediaAsset | null;
   remainingSeconds: number;
   message: string;
+  style: OverlayStyle;
+  sessionId: number;
 };
+
+export type OverlayPlaybackPhase = "intro" | "loop" | "outro" | "closing";

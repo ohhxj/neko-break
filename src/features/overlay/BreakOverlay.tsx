@@ -1,14 +1,23 @@
 import { convertFileSrc, invoke, isTauri } from "@tauri-apps/api/core";
-import type { MediaAsset } from "../../domain/media/types";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { primaryClip, type MediaAsset, type SceneClip } from "../../domain/media/types";
+import type { OverlayPlaybackPhase } from "../../domain/breaks/types";
+import type { OverlayStyle } from "../../domain/settings/types";
 import { useBreakOverlay } from "./useBreakOverlay";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+
+// 把绝对路径转成 Tauri 可消费的 src
+// （重复出现，提到顶部以便组件内多处复用）
+const VIDEO_STACK_PRELOAD = "auto" as const;
 
 type Props = {
   asset: MediaAsset | null;
   remainingSeconds: number;
   message: string;
+  style?: OverlayStyle;
   preview?: boolean;
   dismissible?: boolean;
+  sessionId?: number;
 };
 
 const formatClock = (seconds: number) => {
@@ -17,60 +26,437 @@ const formatClock = (seconds: number) => {
   return `${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`;
 };
 
+// 真实文件系统绝对路径（用户导入素材 / Rust 生成的 poster），
+// 区别于 vite 打包出的 asset URL（预设图片）。后者不能当文件路径读盘。
+const isFileSystemPath = (filePath: string) =>
+  filePath.startsWith("/Users/") ||
+  filePath.startsWith("/private/") ||
+  filePath.startsWith("/var/") ||
+  filePath.startsWith("/Volumes/");
+
 const toMediaUrl = (filePath: string) => {
   if (!filePath) return "";
-  if (filePath.startsWith("/") && isTauri()) {
+  if (isFileSystemPath(filePath) && isTauri()) {
     return convertFileSrc(filePath);
   }
   return filePath;
+};
+
+const toImageUrl = (filePath: string | null | undefined) => {
+  if (!filePath) return "";
+  return toMediaUrl(filePath);
+};
+
+const clipForPhase = (asset: MediaAsset | null, phase: OverlayPlaybackPhase): SceneClip | null => {
+  if (!asset) return null;
+  if (phase === "intro") return asset.introClip;
+  if (phase === "outro") return asset.outroClip;
+  if (phase === "loop") return primaryClip(asset);
+  return null;
 };
 
 export function BreakOverlay({
   asset,
   remainingSeconds,
   message,
+  style = "immersive",
   preview = false,
-  dismissible = false
+  dismissible = false,
+  sessionId = 0
 }: Props) {
-  const liveSeconds = useBreakOverlay(remainingSeconds);
+  const previewSceneSeconds = Math.min(remainingSeconds, 5);
+  const liveSeconds = useBreakOverlay(preview ? previewSceneSeconds : remainingSeconds, !preview, sessionId);
   const completionHandled = useRef(false);
+  const suppressRecovery = useRef(false);
+  const closeRequested = useRef(false);
+  const lastRenderableClip = useRef<SceneClip | null>(null);
+  const liveSecondsRef = useRef(remainingSeconds);
+  const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
+  const [animatedImageUrl, setAnimatedImageUrl] = useState<string | null>(null);
+  const [phase, setPhase] = useState<OverlayPlaybackPhase>(() => (asset?.introClip ? "intro" : "loop"));
+  const currentClip = clipForPhase(asset, phase);
+  const effectiveClip = currentClip ?? (!preview && phase === "closing" ? lastRenderableClip.current : null);
+  const useNativeIntroLoopSequence = false;
+  const useNativeVideo = !preview && isTauri() && effectiveClip?.format === "mov_alpha";
+  const showImagePreview = preview && Boolean(effectiveClip?.previewImagePath);
+  const showAnimatedImage = !preview && effectiveClip?.format === "apng_alpha";
+  const useTransparentImageOverlay = !preview && (showAnimatedImage || useNativeVideo);
+  const showMovPreviewFallback = preview && effectiveClip?.format === "mov_alpha" && !effectiveClip?.previewImagePath;
+  const dismissLabel = asset?.closeButtonLabel?.trim() || "小猫让开";
+  // Seamless 双 video 叠层只用于：非预览、非原生 MOV、循环是 webm，且至少存在循环 clip。
+  // 入场可有可无；存在时另起一层、由 onEnded 驱动切换，彻底避免「重新挂载-重新解码」造成的卡顿。
+  const useSeamlessHtmlVideoStack =
+    !preview &&
+    !useNativeVideo &&
+    !showAnimatedImage &&
+    Boolean(asset?.loopClip) &&
+    asset?.loopClip.format === "webm_alpha" &&
+    (!asset?.introClip || asset.introClip.format === "webm_alpha");
+  // 当入场 + 循环 都是 mov_alpha 时，原生侧走双层预热模式，
+  // 前端不应再为 intro→loop 切换发任何 update_overlay_media——
+  // 否则 Rust 会重新建一个单层 layer 把双层覆盖掉，反而带来卡顿。
+  const useNativeDualLayer =
+    !preview &&
+    isTauri() &&
+    asset?.introClip?.format === "mov_alpha" &&
+    asset?.loopClip.format === "mov_alpha";
+  const outroVideoRef = useRef<HTMLVideoElement | null>(null);
 
   useEffect(() => {
-    if (preview || completionHandled.current || liveSeconds > 0) return;
-    completionHandled.current = true;
-    void invoke("hide_overlay").catch(() => undefined);
-  }, [liveSeconds, preview]);
+    liveSecondsRef.current = liveSeconds;
+  }, [liveSeconds]);
+
+  const beginClosing = () => {
+    if (!completionHandled.current) {
+      completionHandled.current = true;
+      suppressRecovery.current = true;
+      setPhase("closing");
+    }
+    if (!preview) {
+      void invoke("hide_overlay").catch(() => undefined);
+    }
+  };
+
+  const requestDismiss = () => {
+    if (phase === "closing") {
+      beginClosing();
+      return;
+    }
+    if (phase === "outro") {
+      beginClosing();
+      return;
+    }
+    closeRequested.current = true;
+    if (asset?.outroClip) {
+      setPhase("outro");
+    } else {
+      beginClosing();
+    }
+  };
 
   useEffect(() => {
+    setPhase(asset?.introClip ? "intro" : "loop");
     completionHandled.current = false;
-  }, [remainingSeconds]);
+    suppressRecovery.current = false;
+    closeRequested.current = false;
+    lastRenderableClip.current = null;
+  }, [asset?.id, remainingSeconds, sessionId]);
+
+  useEffect(() => {
+    if (currentClip) {
+      lastRenderableClip.current = currentClip;
+    }
+  }, [currentClip]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!showImagePreview || !effectiveClip?.previewImagePath) {
+      setPreviewImageUrl(null);
+      return;
+    }
+
+    // 预设的预览图是 vite 打包的 asset URL，直接当 <img src> 用；
+    // 只有真实文件路径（用户导入素材 / Rust 生成的 poster）才走 load_preview_image 读盘。
+    if (!isTauri() || !isFileSystemPath(effectiveClip.previewImagePath)) {
+      setPreviewImageUrl(toImageUrl(effectiveClip.previewImagePath));
+      return;
+    }
+
+    void invoke<string>("load_preview_image", { filePath: effectiveClip.previewImagePath })
+      .then((dataUrl) => {
+        if (!cancelled) {
+          setPreviewImageUrl(dataUrl);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setPreviewImageUrl(null);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [effectiveClip?.previewImagePath, showImagePreview]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!showAnimatedImage || !effectiveClip?.filePath) {
+      setAnimatedImageUrl(null);
+      return;
+    }
+
+    if (!isTauri()) {
+      setAnimatedImageUrl(toMediaUrl(effectiveClip.filePath));
+      return;
+    }
+
+    void invoke<string>("load_preview_image", { filePath: effectiveClip.filePath })
+      .then((dataUrl) => {
+        if (!cancelled) {
+          setAnimatedImageUrl(dataUrl);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAnimatedImageUrl(null);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [effectiveClip?.filePath, showAnimatedImage]);
+
+  useEffect(() => {
+    if (preview) return;
+    document.documentElement.classList.add("overlay-window");
+    document.body.classList.add("overlay-window");
+    document.getElementById("root")?.classList.add("overlay-window");
+
+    return () => {
+      document.documentElement.classList.remove("overlay-window");
+      document.body.classList.remove("overlay-window");
+      document.getElementById("root")?.classList.remove("overlay-window");
+    };
+  }, [preview]);
+
+  useEffect(() => {
+    if (preview || liveSeconds > 0) return;
+    requestDismiss();
+  }, [liveSeconds, preview, phase, asset?.outroClip]);
+
+  useEffect(() => {
+    if (phase !== "intro" || !asset?.introClip) return;
+    // 双 video 叠层模式下由 intro <video> 的 onEnded 精准触发切换，不再用 setTimeout。
+    if (useSeamlessHtmlVideoStack) return;
+    const timer = window.setTimeout(() => {
+      // 原生双层模式下 Rust 自管时序，前端只更新 phase；
+      // 单层 mov_alpha 才需要 invoke 切换。
+      if (!preview && isTauri() && asset.loopClip.format === "mov_alpha" && !useNativeDualLayer) {
+        void invoke("update_overlay_media", {
+          media: {
+            filePath: asset.loopClip.filePath,
+            format: asset.loopClip.format,
+            shouldLoop: true,
+            nextFilePath: null,
+            nextFormat: null
+          }
+        }).catch(() => undefined);
+      }
+      setPhase("loop");
+    }, Math.max(100, Math.round(asset.introClip.durationSeconds * 1000)));
+    return () => window.clearTimeout(timer);
+  }, [asset?.introClip, asset?.loopClip.filePath, asset?.loopClip.format, phase, preview, useSeamlessHtmlVideoStack, useNativeDualLayer]);
+
+  useEffect(() => {
+    if (phase !== "outro" || !asset?.outroClip) return;
+    // 同样：seamless 模式下 outro 的结束由 onEnded 驱动；预览模式仍依赖 setTimeout 做循环演示。
+    if (useSeamlessHtmlVideoStack && !preview) return;
+    const timer = window.setTimeout(() => {
+      if (preview) {
+        setPhase(asset?.introClip ? "intro" : "loop");
+        return;
+      }
+      beginClosing();
+    }, Math.max(100, Math.round(asset.outroClip.durationSeconds * 1000)));
+    return () => window.clearTimeout(timer);
+  }, [phase, asset?.introClip, asset?.outroClip, preview, useSeamlessHtmlVideoStack]);
+
+  // 进入 outro 时，imperatively 把预挂载的 outro video 从头播放
+  useEffect(() => {
+    if (!useSeamlessHtmlVideoStack) return;
+    if (phase !== "outro") return;
+    const node = outroVideoRef.current;
+    if (!node) return;
+    try {
+      node.currentTime = 0;
+    } catch {
+      /* 某些浏览器在元数据未就绪时 set currentTime 会抛 */
+    }
+    void node.play().catch(() => undefined);
+  }, [phase, useSeamlessHtmlVideoStack]);
+
+  useEffect(() => {
+    if (!preview || phase !== "loop" || !asset?.outroClip) return;
+    const timer = window.setTimeout(() => {
+      setPhase("outro");
+    }, 1800);
+    return () => window.clearTimeout(timer);
+  }, [preview, phase, asset?.outroClip]);
+
+  useEffect(() => {
+    if (preview || !isTauri()) return;
+    if (phase === "closing") return;
+    if (useNativeIntroLoopSequence && phase === "loop") return;
+    // 原生双层模式下 Rust 在 show_overlay 阶段一次性建好两个 layer，
+    // 中途切换会摧毁双层、重建单层，反而引入卡顿。直接跳过。
+    if (useNativeDualLayer && (phase === "intro" || phase === "loop")) return;
+    const clip = effectiveClip;
+    if (!clip) return;
+    void invoke("update_overlay_media", {
+      media: {
+        filePath: clip.filePath,
+        format: clip.format,
+        shouldLoop: phase === "loop",
+        nextFilePath: useNativeIntroLoopSequence && phase === "intro" ? asset?.loopClip.filePath : null,
+        nextFormat: useNativeIntroLoopSequence && phase === "intro" ? asset?.loopClip.format : null
+      }
+    }).catch(() => undefined);
+  }, [asset?.loopClip.filePath, asset?.loopClip.format, effectiveClip?.id, effectiveClip?.filePath, effectiveClip?.format, phase, preview, useNativeIntroLoopSequence, useNativeDualLayer]);
+
+  useEffect(() => {
+    if (preview || !dismissible || !isTauri()) return;
+
+    const appWindow = getCurrentWindow();
+    let unlisten: (() => void) | undefined;
+
+    void appWindow.setAlwaysOnTop(true).catch(() => undefined);
+    void appWindow.onFocusChanged(({ payload: focused }) => {
+      if (!focused && liveSecondsRef.current > 0) {
+        if (suppressRecovery.current) return;
+        window.setTimeout(() => {
+          void appWindow.setAlwaysOnTop(true).catch(() => undefined);
+        }, 120);
+      }
+    }).then((cleanup) => {
+      unlisten = cleanup;
+    });
+
+    return () => {
+      unlisten?.();
+    };
+  }, [dismissible, preview, sessionId]);
 
   return (
-    <div className={preview ? "overlay overlay--preview" : "overlay"}>
-      <div className="overlay__glow" />
-      <div className="overlay__media">
-        {asset ? (
-          asset.filePath ? (
-            <video src={toMediaUrl(asset.filePath)} autoPlay loop muted playsInline />
-          ) : (
-            <div className="overlay__placeholder">{asset.name}</div>
-          )
-        ) : (
-          <div className="overlay__placeholder">Pick an asset</div>
-        )}
-      </div>
-      <div className="overlay__hud">
-        <p>{message}</p>
-        <h3>{formatClock(liveSeconds)}</h3>
-        {dismissible ? (
-          <button
-            type="button"
-            className="secondary overlay__dismiss"
-            onClick={() => void invoke("hide_overlay").catch(() => undefined)}
-          >
-            End break
-          </button>
-        ) : null}
+    <div
+      className={[
+      "overlay",
+      preview ? "overlay--preview" : "",
+      !preview ? "overlay--live" : "",
+        !preview && useNativeVideo ? "overlay--native-transparent" : "",
+        useTransparentImageOverlay ? "overlay--native-transparent" : "",
+        preview && style === "floating" ? "overlay--preview-floating" : "",
+        !preview && style === "floating" ? "overlay--live-floating" : "",
+        style === "floating" ? "overlay--floating" : "overlay--immersive"
+      ]
+        .filter(Boolean)
+        .join(" ")}
+    >
+      <div className="overlay__surface">
+        <div className="overlay__glow" />
+        <div className="overlay__media">
+          {effectiveClip ? (
+            showImagePreview ? (
+              previewImageUrl ? (
+                <img src={previewImageUrl} alt={asset?.name ?? "scene preview"} className="overlay__preview-image" />
+              ) : (
+                <div className="overlay__placeholder">正在读取预览图…</div>
+              )
+            ) : showAnimatedImage ? (
+              animatedImageUrl ? (
+                <img
+                  src={animatedImageUrl}
+                  alt={asset?.name ?? "scene preview"}
+                  className="overlay__preview-image overlay__animated-image"
+                />
+              ) : (
+                <div className="overlay__placeholder">正在读取动画素材…</div>
+              )
+            ) : showMovPreviewFallback ? (
+              <div className="overlay__placeholder">这支 MOV 会在实际弹出时用原生透明播放</div>
+            ) : useNativeVideo ? (
+              <div className="overlay__native-stage" aria-hidden="true" />
+            ) : useSeamlessHtmlVideoStack && asset ? (
+              // 多层 video 叠放：循环始终在播（hidden 时也在解码缓冲），
+              // 入场 onEnded 触发可见性翻转，避免任何 unmount/remount 卡顿。
+              // 三层各自负责一个 phase；loop 是 base 层永远存在。
+              <div className="overlay__video-stack">
+                <video
+                  key={`${asset.id}-loop-${asset.loopClip.filePath}`}
+                  src={toMediaUrl(asset.loopClip.filePath)}
+                  autoPlay
+                  loop
+                  muted
+                  playsInline
+                  preload={VIDEO_STACK_PRELOAD}
+                  className="overlay__video-stack-layer"
+                  style={{ opacity: phase === "intro" && asset.introClip ? 0 : 1 }}
+                />
+                {asset.introClip ? (
+                  <video
+                    key={`${asset.id}-intro-${asset.introClip.filePath}`}
+                    src={toMediaUrl(asset.introClip.filePath)}
+                    autoPlay
+                    muted
+                    playsInline
+                    preload={VIDEO_STACK_PRELOAD}
+                    className="overlay__video-stack-layer"
+                    style={{
+                      opacity: phase === "intro" ? 1 : 0,
+                      pointerEvents: "none"
+                    }}
+                    onEnded={() => {
+                      if (phase === "intro") {
+                        setPhase("loop");
+                      }
+                    }}
+                  />
+                ) : null}
+                {asset.outroClip ? (
+                  <video
+                    key={`${asset.id}-outro-${asset.outroClip.filePath}`}
+                    ref={outroVideoRef}
+                    src={toMediaUrl(asset.outroClip.filePath)}
+                    muted
+                    playsInline
+                    preload={VIDEO_STACK_PRELOAD}
+                    className="overlay__video-stack-layer"
+                    style={{
+                      opacity: phase === "outro" || phase === "closing" ? 1 : 0,
+                      pointerEvents: "none"
+                    }}
+                    onEnded={() => {
+                      if (phase === "outro") {
+                        beginClosing();
+                      }
+                    }}
+                  />
+                ) : null}
+              </div>
+            ) : effectiveClip.filePath ? (
+              <video
+                key={`${asset?.id ?? "scene"}-${phase}-${effectiveClip.filePath}`}
+                src={toMediaUrl(effectiveClip.filePath)}
+                autoPlay
+                loop={phase === "loop"}
+                muted
+                playsInline
+              />
+            ) : (
+              <div className="overlay__placeholder">{asset?.name ?? "Scene"}</div>
+            )
+          ) : preview ? (
+            <div className="overlay__placeholder">Pick an asset</div>
+          ) : null}
+        </div>
+        <div className="overlay__hud">
+          {message.trim() ? <p className="overlay__message">{message}</p> : null}
+          <h3>{formatClock(liveSeconds)}</h3>
+          {dismissible ? (
+            <button
+              type="button"
+              className="secondary overlay__dismiss"
+              onClick={() => {
+                requestDismiss();
+              }}
+            >
+              {dismissLabel}
+            </button>
+          ) : null}
+        </div>
       </div>
     </div>
   );

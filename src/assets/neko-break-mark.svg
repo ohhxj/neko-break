@@ -1,0 +1,38 @@
+<svg width="192" height="192" viewBox="0 0 192 192" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect x="8" y="8" width="176" height="176" rx="42" fill="url(#bg)"/>
+  <rect x="12" y="12" width="168" height="168" rx="38" stroke="url(#stroke)" stroke-width="4"/>
+
+  <path d="M44 126C44 84.0264 78.0264 50 120 50H130C140.493 50 149 58.5066 149 69V125C149 136.046 140.046 145 129 145H63C52.5066 145 44 136.493 44 126Z" fill="#7F6B91"/>
+  <path d="M47 77L62 43C65.461 35.1552 75.2068 31.7648 83.0041 35.3311L91 38.9877L84 77H47Z" fill="#D7C5BA"/>
+  <path d="M142 77L129 42C126.298 34.7313 117.67 31.0796 110.47 33.9575L101 37.7449L107 77H142Z" fill="#F6E9DD"/>
+  <path d="M42 93C42 61.5198 67.5198 36 99 36H101C132.48 36 158 61.5198 158 93V102C158 122.435 141.435 139 121 139H79C58.5655 139 42 122.435 42 102V93Z" fill="#FFF7EE"/>
+  <path d="M97 36H102C123.539 36 142.265 47.9477 151.994 65.5797C146.995 66.2602 142.155 66.6968 137.842 66.6968C121.568 66.6968 110.665 51.3936 94.5 51.3936C79.3389 51.3936 68.6734 66.6968 51.7003 66.6968C49.7031 66.6968 47.592 66.4844 45.4304 66.0848C55.0094 48.2355 74.2471 36 97 36Z" fill="#D7C5BA"/>
+  <path d="M72 89C76.9706 89 81 84.9706 81 80C81 75.0294 76.9706 71 72 71C67.0294 71 63 75.0294 63 80C63 84.9706 67.0294 89 72 89Z" fill="#173129"/>
+  <path d="M130 89C134.971 89 139 84.9706 139 80C139 75.0294 134.971 71 130 71C125.029 71 121 75.0294 121 80C121 84.9706 125.029 89 130 89Z" fill="#173129"/>
+  <path d="M64 79C67.5 76.5 76.5 76.5 80 79" stroke="#173129" stroke-width="5" stroke-linecap="round"/>
+  <path d="M122 79C125.5 76.5 134.5 76.5 138 79" stroke="#173129" stroke-width="5" stroke-linecap="round"/>
+  <path d="M96 92L89 98H103L96 92Z" fill="#A66D64"/>
+  <path d="M86 108C91.9255 111.977 100.074 111.977 106 108" stroke="#173129" stroke-width="4.5" stroke-linecap="round"/>
+  <path d="M55 91H41" stroke="#173129" stroke-width="4" stroke-linecap="round"/>
+  <path d="M52 100L39 103" stroke="#173129" stroke-width="4" stroke-linecap="round"/>
+  <path d="M52 82L39 79" stroke="#173129" stroke-width="4" stroke-linecap="round"/>
+
+  <path d="M51 116C51 108.82 56.8203 103 64 103H127C134.18 103 140 108.82 140 116V139H51V116Z" fill="#8D7A9C"/>
+  <path d="M57 114C57 108.477 61.4772 104 67 104H126C131.523 104 136 108.477 136 114V143H57V114Z" fill="#FFF6A8" stroke="#403349" stroke-width="4"/>
+  <path d="M63 118C63.8889 119.111 65.6667 121.667 65.6667 123C65.6667 124.333 63.8889 126.889 63 128" stroke="#F0B2B4" stroke-width="4" stroke-linecap="round"/>
+  <text x="96" y="129" text-anchor="middle" font-size="20" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif" font-weight="700" fill="#2F2637">休息一下!</text>
+
+  <circle cx="144" cy="64" r="4" fill="#FFE781"/>
+  <path d="M155 54C155.423 58.0126 157.987 60.577 162 61C157.987 61.423 155.423 63.9874 155 68C154.577 63.9874 152.013 61.423 148 61C152.013 60.577 154.577 58.0126 155 54Z" fill="#FFE781"/>
+
+  <defs>
+    <linearGradient id="bg" x1="28" y1="16" x2="159" y2="178" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#8D66F2"/>
+      <stop offset="1" stop-color="#4E2A8E"/>
+    </linearGradient>
+    <linearGradient id="stroke" x1="24" y1="18" x2="161" y2="178" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#BEA7FF"/>
+      <stop offset="1" stop-color="#6C43C1"/>
+    </linearGradient>
+  </defs>
+</svg>

@@ -8,7 +8,8 @@ pub struct AppSettings {
     pub launch_at_login: bool,
     pub allow_delay_once: bool,
     pub allow_pause_today: bool,
-    pub default_asset_id: Option<String>,
+    pub default_scene_id: Option<String>,
+    pub overlay_style: String,
 }
 
 impl Default for AppSettings {
@@ -19,7 +20,8 @@ impl Default for AppSettings {
             launch_at_login: true,
             allow_delay_once: true,
             allow_pause_today: true,
-            default_asset_id: None,
+            default_scene_id: None,
+            overlay_style: "immersive".into(),
         }
     }
 }

@@ -6,5 +6,6 @@ export const defaultSettings: AppSettings = {
   launchAtLogin: true,
   allowDelayOnce: true,
   allowPauseToday: true,
-  defaultAssetId: null
+  defaultSceneId: null,
+  overlayStyle: "floating"
 };
