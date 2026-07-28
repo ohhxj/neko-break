@@ -26,7 +26,13 @@ export const reconcileSchedulerAfterSettingsChange = (
 
   const timingChanged =
     previousSettings.intervalMinutes !== nextSettings.intervalMinutes ||
-    previousSettings.breakMinutes !== nextSettings.breakMinutes;
+    previousSettings.breakMinutes !== nextSettings.breakMinutes ||
+    previousSettings.doNotDisturbEnabled !== nextSettings.doNotDisturbEnabled ||
+    previousSettings.doNotDisturbStart !== nextSettings.doNotDisturbStart ||
+    previousSettings.doNotDisturbEnd !== nextSettings.doNotDisturbEnd ||
+    previousSettings.companionEnabled !== nextSettings.companionEnabled ||
+    previousSettings.companionStart !== nextSettings.companionStart ||
+    previousSettings.companionEnd !== nextSettings.companionEnd;
 
   if (timingChanged && snapshot.state !== "paused_today") {
     return createScheduler(nextSettings, at).start();

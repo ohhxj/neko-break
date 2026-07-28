@@ -10,26 +10,30 @@ export const createMediaStore = (invoke: Invoke) => ({
     filePath: string,
     durationSeconds: number,
     pixelWidth: number,
-    pixelHeight: number
+    pixelHeight: number,
+    previewImageDataUrl: string | null = null
   ): Promise<MediaAsset> {
     return invoke<MediaAsset>("import_media", {
       filePath,
       durationSeconds,
       pixelWidth,
-      pixelHeight
+      pixelHeight,
+      previewImageDataUrl
     });
   },
   async importClip(
     filePath: string,
     durationSeconds: number,
     pixelWidth: number,
-    pixelHeight: number
+    pixelHeight: number,
+    previewImageDataUrl: string | null = null
   ): Promise<SceneClip> {
     return invoke<SceneClip>("import_clip", {
       filePath,
       durationSeconds,
       pixelWidth,
-      pixelHeight
+      pixelHeight,
+      previewImageDataUrl
     });
   },
   async saveScene(scene: MediaAsset): Promise<MediaAsset> {

@@ -21,6 +21,24 @@ fn migrate_settings_value(mut value: Value) -> Result<AppSettings, String> {
         }
         object.insert("allowDelayOnce".into(), Value::Bool(true));
         object.insert("allowPauseToday".into(), Value::Bool(true));
+        object
+            .entry("doNotDisturbEnabled")
+            .or_insert(Value::Bool(false));
+        object
+            .entry("doNotDisturbStart")
+            .or_insert(Value::String("12:00".into()));
+        object
+            .entry("doNotDisturbEnd")
+            .or_insert(Value::String("13:30".into()));
+        object
+            .entry("companionEnabled")
+            .or_insert(Value::Bool(false));
+        object
+            .entry("companionStart")
+            .or_insert(Value::String("09:00".into()));
+        object
+            .entry("companionEnd")
+            .or_insert(Value::String("22:00".into()));
     }
     serde_json::from_value(value).map_err(|error| error.to_string())
 }
@@ -41,8 +59,12 @@ pub async fn load(app: &tauri::AppHandle) -> Result<AppSettings, String> {
 pub async fn save(app: &tauri::AppHandle, settings: &AppSettings) -> Result<(), String> {
     let path = settings_path(app)?;
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).await.map_err(|error| error.to_string())?;
+        fs::create_dir_all(parent)
+            .await
+            .map_err(|error| error.to_string())?;
     }
     let payload = serde_json::to_string_pretty(settings).map_err(|error| error.to_string())?;
-    fs::write(path, payload).await.map_err(|error| error.to_string())
+    fs::write(path, payload)
+        .await
+        .map_err(|error| error.to_string())
 }

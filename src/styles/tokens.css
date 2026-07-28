@@ -40,6 +40,34 @@
   --text-small: 12px;
   --text-micro: 11px;
 
+  /* Semantic desktop typography: use these in product modules. */
+  --type-brand: 22px;
+  --type-modal-title: 20px;
+  --type-section-title: 16px;
+  --type-control: 14px;
+  --type-label: 13px;
+  --type-body: 12px;
+  --type-caption: 11px;
+  --type-micro: 10px;
+  --type-button: 14px;
+  --type-button-primary: 16px;
+  --type-stat: 34px;
+  --type-countdown: 58px;
+
+  --leading-heading: 1.25;
+  --leading-control: 1.3;
+  --leading-copy: 1.45;
+
+  --button-height-sm: 32px;
+  --button-height-md: 40px;
+  --button-height-lg: 44px;
+  --button-radius-sm: 8px;
+  --button-radius-md: 10px;
+  --button-radius-lg: 12px;
+  --button-padding-sm: 12px;
+  --button-padding-md: 16px;
+  --button-padding-lg: 18px;
+
   --line-tight: 1.1;
   --line-title: 1.25;
   --line-body: 1.45;

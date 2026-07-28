@@ -4,6 +4,7 @@ import type { AppSettings } from "./types";
 type Invoke = <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
 
 const withAlwaysAllowedActions = (settings: AppSettings): AppSettings => ({
+  ...defaultSettings,
   ...settings,
   allowDelayOnce: true,
   allowPauseToday: true

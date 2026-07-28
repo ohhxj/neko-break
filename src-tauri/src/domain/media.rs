@@ -1,6 +1,7 @@
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde::{Deserialize, Serialize};
-use std::path::Path;
-use std::process::Command;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::Manager;
 use tokio::fs;
@@ -144,6 +145,67 @@ fn scene_clip_from_fields(
     }
 }
 
+fn managed_media_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    Ok(app
+        .path()
+        .app_config_dir()
+        .map_err(|error| error.to_string())?
+        .join("media-files"))
+}
+
+async fn copy_to_managed_media(
+    app: &tauri::AppHandle,
+    source_path: &str,
+    file_id: &str,
+) -> Result<String, String> {
+    let source = PathBuf::from(source_path);
+    let media_dir = managed_media_dir(app)?;
+    if source.starts_with(&media_dir) {
+        return Ok(source_path.to_string());
+    }
+
+    fs::create_dir_all(&media_dir)
+        .await
+        .map_err(|error| format!("Could not create managed media directory: {error}"))?;
+    let extension = source
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("mov");
+    let destination = media_dir.join(format!("{file_id}.{extension}"));
+    fs::copy(&source, &destination)
+        .await
+        .map_err(|error| format!("无法把素材复制到应用资料库：{error}"))?;
+    destination
+        .to_str()
+        .map(str::to_string)
+        .ok_or_else(|| "Managed media path could not be encoded.".to_string())
+}
+
+async fn ensure_managed_clip(app: &tauri::AppHandle, clip: &mut SceneClip) {
+    match copy_to_managed_media(app, &clip.file_path, &clip.id).await {
+        Ok(path) => clip.file_path = path,
+        Err(error) => eprintln!("Could not migrate clip {}: {error}", clip.id),
+    }
+}
+
+pub async fn ensure_managed_scene_media(app: &tauri::AppHandle, scene: &mut SceneAsset) {
+    if let Some(intro) = scene.intro_clip.as_mut() {
+        ensure_managed_clip(app, intro).await;
+    }
+    ensure_managed_clip(app, &mut scene.loop_clip).await;
+    if let Some(outro) = scene.outro_clip.as_mut() {
+        ensure_managed_clip(app, outro).await;
+    }
+
+    scene.file_path = scene.loop_clip.file_path.clone();
+    scene.format = scene.loop_clip.format.clone();
+    scene.duration_seconds = scene.loop_clip.duration_seconds;
+    scene.file_size_bytes = scene.loop_clip.file_size_bytes;
+    scene.pixel_width = scene.loop_clip.pixel_width;
+    scene.pixel_height = scene.loop_clip.pixel_height;
+    scene.has_transparency = scene.loop_clip.has_transparency;
+}
+
 pub async fn ensure_scene_previews(app: &tauri::AppHandle, scene: &mut SceneAsset) {
     let mut poster_seed = scene.name.trim().to_string();
     if poster_seed.is_empty() {
@@ -158,20 +220,28 @@ pub async fn ensure_scene_previews(app: &tauri::AppHandle, scene: &mut SceneAsse
     if let Some(intro) = scene.intro_clip.as_mut() {
         if intro.preview_image_path.is_none() {
             let stem = format!("{poster_seed}-intro");
-            intro.preview_image_path = generate_preview_image(app, &intro.file_path, &stem, stamp).await;
+            match generate_preview_image(app, &intro.file_path, &stem, stamp).await {
+                Ok(path) => intro.preview_image_path = Some(path),
+                Err(error) => eprintln!("Could not generate intro preview: {error}"),
+            }
         }
     }
 
     if scene.loop_clip.preview_image_path.is_none() {
         let stem = format!("{poster_seed}-loop");
-        scene.loop_clip.preview_image_path =
-            generate_preview_image(app, &scene.loop_clip.file_path, &stem, stamp + 1).await;
+        match generate_preview_image(app, &scene.loop_clip.file_path, &stem, stamp + 1).await {
+            Ok(path) => scene.loop_clip.preview_image_path = Some(path),
+            Err(error) => eprintln!("Could not generate loop preview: {error}"),
+        }
     }
 
     if let Some(outro) = scene.outro_clip.as_mut() {
         if outro.preview_image_path.is_none() {
             let stem = format!("{poster_seed}-outro");
-            outro.preview_image_path = generate_preview_image(app, &outro.file_path, &stem, stamp + 2).await;
+            match generate_preview_image(app, &outro.file_path, &stem, stamp + 2).await {
+                Ok(path) => outro.preview_image_path = Some(path),
+                Err(error) => eprintln!("Could not generate outro preview: {error}"),
+            }
         }
     }
 
@@ -180,8 +250,18 @@ pub async fn ensure_scene_previews(app: &tauri::AppHandle, scene: &mut SceneAsse
             .loop_clip
             .preview_image_path
             .clone()
-            .or_else(|| scene.intro_clip.as_ref().and_then(|clip| clip.preview_image_path.clone()))
-            .or_else(|| scene.outro_clip.as_ref().and_then(|clip| clip.preview_image_path.clone()));
+            .or_else(|| {
+                scene
+                    .intro_clip
+                    .as_ref()
+                    .and_then(|clip| clip.preview_image_path.clone())
+            })
+            .or_else(|| {
+                scene
+                    .outro_clip
+                    .as_ref()
+                    .and_then(|clip| clip.preview_image_path.clone())
+            });
     }
 
     if scene.cover_image_path.is_none() {
@@ -197,38 +277,164 @@ async fn generate_preview_image(
     file_path: &str,
     stem: &str,
     stamp: u128,
-) -> Option<String> {
-    let base = app.path().app_config_dir().ok()?.join("media-previews");
-    fs::create_dir_all(&base).await.ok()?;
+) -> Result<String, String> {
+    let base = app
+        .path()
+        .app_config_dir()
+        .map_err(|error| error.to_string())?
+        .join("media-previews");
+    fs::create_dir_all(&base)
+        .await
+        .map_err(|error| format!("Could not create preview directory: {error}"))?;
 
     let output_preview = base.join(format!("{stem}-poster-{stamp}.png"));
-    let output_preview_string = output_preview.to_str()?.to_string();
+    let output_preview_string = output_preview
+        .to_str()
+        .ok_or_else(|| "Preview path could not be encoded.".to_string())?
+        .to_string();
+    let quick_look_error = generate_preview_with_quick_look(file_path, &output_preview, stamp).err();
 
-    let status = Command::new("ffmpeg")
-        .args([
-            "-y",
-            "-i",
-            file_path,
-            "-vf",
-            "select=eq(n\\,0),scale=720:-1:flags=lanczos",
-            "-frames:v",
-            "1",
-            &output_preview_string,
-        ])
-        .status()
-        .ok()?;
-
-    if !status.success() {
-        return None;
+    if !output_preview.exists() {
+        if let Err(ffmpeg_error) = generate_preview_with_ffmpeg(file_path, &output_preview) {
+            return Err(format!(
+                "封面提取失败。Quick Look: {}; ffmpeg: {ffmpeg_error}",
+                quick_look_error.unwrap_or_else(|| "没有生成图片".to_string())
+            ));
+        }
     }
 
-    Some(output_preview_string)
+    Ok(output_preview_string)
 }
 
-/// 仅支持透明 MOV（HEVC-alpha / ProRes 4444）。
-/// WebM 在 macOS WebView 里无法透明合成，直接拒绝导入；
-/// 返回校验通过的文件大小（字节）。
-async fn validate_mov_alpha_input(file_path: &str) -> Result<u64, String> {
+async fn save_preview_data_url(
+    app: &tauri::AppHandle,
+    stem: &str,
+    stamp: u128,
+    data_url: &str,
+) -> Result<String, String> {
+    let encoded = data_url
+        .strip_prefix("data:image/png;base64,")
+        .ok_or_else(|| "Preview image must be a PNG data URL.".to_string())?;
+    let bytes = STANDARD
+        .decode(encoded)
+        .map_err(|error| format!("Could not decode preview image: {error}"))?;
+    if bytes.is_empty() {
+        return Err("Preview image was empty.".into());
+    }
+
+    let base = app
+        .path()
+        .app_config_dir()
+        .map_err(|error| error.to_string())?
+        .join("media-previews");
+    fs::create_dir_all(&base)
+        .await
+        .map_err(|error| format!("Could not create preview directory: {error}"))?;
+    let output_preview = base.join(format!("{stem}-poster-{stamp}.png"));
+    fs::write(&output_preview, bytes)
+        .await
+        .map_err(|error| format!("Could not save preview image: {error}"))?;
+    output_preview
+        .to_str()
+        .map(str::to_string)
+        .ok_or_else(|| "Preview path could not be encoded.".to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn generate_preview_with_quick_look(
+    file_path: &str,
+    output_preview: &Path,
+    stamp: u128,
+) -> Result<(), String> {
+    let temp_dir = output_preview.with_extension(format!("quicklook-{stamp}"));
+    std::fs::create_dir_all(&temp_dir)
+        .map_err(|error| format!("Could not create Quick Look directory: {error}"))?;
+
+    let result = (|| {
+        let status = Command::new("/usr/bin/qlmanage")
+            .args(["-t", "-s", "720", "-o"])
+            .arg(&temp_dir)
+            .arg(file_path)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map_err(|error| format!("Could not start Quick Look: {error}"))?;
+
+        if !status.success() {
+            return Err(format!("Quick Look exited with {status}."));
+        }
+
+        let generated_preview = std::fs::read_dir(&temp_dir)
+            .map_err(|error| format!("Could not read Quick Look output: {error}"))?
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .find(|path| {
+                path.extension()
+                    .and_then(|extension| extension.to_str())
+                    .is_some_and(|extension| extension.eq_ignore_ascii_case("png"))
+            })
+            .ok_or_else(|| "Quick Look did not produce a PNG preview.".to_string())?;
+
+        std::fs::rename(&generated_preview, output_preview)
+            .map_err(|error| format!("Could not save Quick Look preview: {error}"))
+    })();
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    result
+}
+
+#[cfg(not(target_os = "macos"))]
+fn generate_preview_with_quick_look(
+    _file_path: &str,
+    _output_preview: &Path,
+    _stamp: u128,
+) -> Result<(), String> {
+    Err("Quick Look is only available on macOS.".into())
+}
+
+fn generate_preview_with_ffmpeg(file_path: &str, output_preview: &Path) -> Result<(), String> {
+    let mut candidates = vec![PathBuf::from("ffmpeg")];
+    #[cfg(target_os = "macos")]
+    {
+        candidates.insert(0, PathBuf::from("/usr/local/bin/ffmpeg"));
+        candidates.insert(0, PathBuf::from("/opt/homebrew/bin/ffmpeg"));
+    }
+    #[cfg(target_os = "windows")]
+    {
+        candidates.insert(0, PathBuf::from("ffmpeg.exe"));
+    }
+    let mut last_error = "ffmpeg is not installed".to_string();
+
+    for candidate in candidates {
+        match Command::new(&candidate)
+            .args([
+                "-y",
+                "-ss",
+                "0.5",
+                "-i",
+                file_path,
+                "-vf",
+                "scale=720:-1:flags=lanczos",
+                "-frames:v",
+                "1",
+            ])
+            .arg(output_preview)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+        {
+            Ok(status) if status.success() => return Ok(()),
+            Ok(status) => last_error = format!("{} exited with {status}", candidate.display()),
+            Err(error) => last_error = format!("{}: {error}", candidate.display()),
+        }
+    }
+
+    Err(last_error)
+}
+
+/// macOS 使用透明 MOV，Windows 使用 VP9-alpha WebM。
+/// 返回校验通过的文件大小与识别出的格式。
+async fn validate_platform_media_input(file_path: &str) -> Result<(u64, String), String> {
     let metadata = fs::metadata(file_path)
         .await
         .map_err(|_| "The selected file could not be found.".to_string())?;
@@ -236,15 +442,36 @@ async fn validate_mov_alpha_input(file_path: &str) -> Result<u64, String> {
         return Err("The selected path is not a file.".into());
     }
     if metadata.len() == 0 {
-        return Err("The selected file is empty. Try a valid transparent MOV.".into());
+        return Err("The selected file is empty.".into());
     }
 
-    match detect_format(file_path) {
-        "mov_alpha" => Ok(metadata.len()),
-        "webm_alpha" => {
-            Err("目前仅支持透明 MOV（mov-alpha）素材，WebM 在 macOS 上无法透明显示。".into())
+    let format = detect_format(file_path);
+    #[cfg(target_os = "macos")]
+    {
+        return match format {
+            "mov_alpha" => Ok((metadata.len(), format.to_string())),
+            "webm_alpha" => {
+                Err("macOS 版本请导入透明 MOV；WebM 在 macOS WebView 中无法稳定显示透明通道。".into())
+            }
+            _ => Err("不支持的素材格式，请导入透明 MOV。".into()),
+        };
+    }
+    #[cfg(target_os = "windows")]
+    {
+        return match format {
+            "webm_alpha" => Ok((metadata.len(), format.to_string())),
+            "mov_alpha" => {
+                Err("Windows 版本请导入 VP9-alpha WebM；透明 MOV 仅用于 macOS 版本。".into())
+            }
+            _ => Err("不支持的素材格式，请导入 VP9-alpha WebM。".into()),
+        };
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        match format {
+            "mov_alpha" | "webm_alpha" => Ok((metadata.len(), format.to_string())),
+            _ => Err("Unsupported media type. Import a transparent MOV or WebM file.".into()),
         }
-        _ => Err("Unsupported file type. Import a transparent MOV file.".into()),
     }
 }
 
@@ -254,8 +481,9 @@ pub async fn import_clip(
     duration_seconds: f32,
     pixel_width: u32,
     pixel_height: u32,
+    preview_image_data_url: Option<&str>,
 ) -> Result<SceneClip, String> {
-    let file_size_bytes = validate_mov_alpha_input(file_path).await?;
+    let (file_size_bytes, format) = validate_platform_media_input(file_path).await?;
 
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -266,13 +494,17 @@ pub async fn import_clip(
         .file_stem()
         .and_then(|value| value.to_str())
         .unwrap_or("clip");
-    let preview_image_path = generate_preview_image(app, file_path, stem, stamp).await;
+    let managed_file_path = copy_to_managed_media(app, file_path, &id).await?;
+    let preview_image_path = Some(match preview_image_data_url {
+        Some(data_url) => save_preview_data_url(app, stem, stamp, data_url).await?,
+        None => generate_preview_image(app, &managed_file_path, stem, stamp).await?,
+    });
 
     Ok(SceneClip {
         id,
-        file_path: file_path.to_string(),
+        file_path: managed_file_path,
         preview_image_path,
-        format: "mov_alpha".to_string(),
+        format,
         duration_seconds,
         file_size_bytes,
         pixel_width,
@@ -287,8 +519,9 @@ pub async fn import_asset(
     duration_seconds: f32,
     pixel_width: u32,
     pixel_height: u32,
+    preview_image_data_url: Option<&str>,
 ) -> Result<SceneAsset, String> {
-    let file_size_bytes = validate_mov_alpha_input(file_path).await?;
+    let (file_size_bytes, format) = validate_platform_media_input(file_path).await?;
 
     let name = Path::new(file_path)
         .file_stem()
@@ -300,13 +533,16 @@ pub async fn import_asset(
         .map_err(|error| error.to_string())?
         .as_millis();
     let id = format!("scene-{stamp}");
-    let file_path_string = file_path.to_string();
-    let preview_image_path = generate_preview_image(app, file_path, &name, stamp).await;
+    let file_path_string = copy_to_managed_media(app, file_path, &format!("{id}-loop")).await?;
+    let preview_image_path = Some(match preview_image_data_url {
+        Some(data_url) => save_preview_data_url(app, &name, stamp, data_url).await?,
+        None => generate_preview_image(app, &file_path_string, &name, stamp).await?,
+    });
     let loop_clip = scene_clip_from_fields(
         &id,
         file_path_string.clone(),
         preview_image_path.clone(),
-        "mov_alpha".to_string(),
+        format.clone(),
         duration_seconds,
         file_size_bytes,
         pixel_width,
@@ -319,7 +555,7 @@ pub async fn import_asset(
         name,
         file_path: file_path_string,
         preview_image_path: preview_image_path.clone(),
-        format: "mov_alpha".to_string(),
+        format,
         duration_seconds,
         file_size_bytes,
         pixel_width,
@@ -342,8 +578,8 @@ pub fn probe_asset(file_path: &str) -> Result<MediaProbeResult, String> {
     use objc2_av_foundation::AVAsset;
     use objc2_foundation::NSURL;
 
-    let url =
-        NSURL::from_file_path(file_path).ok_or("The selected file path could not be opened.".to_string())?;
+    let url = NSURL::from_file_path(file_path)
+        .ok_or("The selected file path could not be opened.".to_string())?;
     let asset = unsafe { AVAsset::assetWithURL(&url) };
     let duration = unsafe { asset.duration() };
 

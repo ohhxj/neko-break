@@ -8,7 +8,10 @@ describe("defaultSettings", () => {
     expect(defaultSettings.breakMinutes).toBe(5);
     expect(defaultSettings.launchAtLogin).toBe(true);
     expect(defaultSettings.allowDelayOnce).toBe(true);
-    expect(defaultSettings.overlayStyle).toBe("floating");
+    expect(defaultSettings.overlayStyle).toBe("immersive");
+    expect(defaultSettings.doNotDisturbEnabled).toBe(false);
+    expect(defaultSettings.doNotDisturbStart).toBe("12:00");
+    expect(defaultSettings.doNotDisturbEnd).toBe("13:30");
   });
 });
 
@@ -33,6 +36,25 @@ describe("createSettingsStore", () => {
 
     expect(settings.allowDelayOnce).toBe(true);
     expect(settings.allowPauseToday).toBe(true);
+  });
+
+  it("restores do-not-disturb defaults when loading legacy settings", async () => {
+    const invoke = vi.fn().mockResolvedValue({
+      intervalMinutes: 90,
+      breakMinutes: 5,
+      launchAtLogin: true,
+      allowDelayOnce: true,
+      allowPauseToday: true,
+      defaultSceneId: null,
+      overlayStyle: "floating"
+    });
+    const store = createSettingsStore(invoke);
+
+    const settings = await store.load();
+
+    expect(settings.doNotDisturbEnabled).toBe(false);
+    expect(settings.doNotDisturbStart).toBe("12:00");
+    expect(settings.doNotDisturbEnd).toBe("13:30");
   });
 
   it("saves launch-at-login changes", async () => {

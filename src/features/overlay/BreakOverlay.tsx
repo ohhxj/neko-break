@@ -1,10 +1,16 @@
 import { convertFileSrc, invoke, isTauri } from "@tauri-apps/api/core";
+import { emitTo } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { primaryClip, type MediaAsset, type SceneClip } from "../../domain/media/types";
 import type { OverlayPlaybackPhase } from "../../domain/breaks/types";
+import type { BreakOutcome } from "../../domain/break-history/types";
 import type { OverlayStyle } from "../../domain/settings/types";
+import { overlayCountdownMode, overlayDismissAction } from "./playback";
 import { useBreakOverlay } from "./useBreakOverlay";
 import { useEffect, useRef, useState } from "react";
+import { Leaf } from "lucide-react";
+import restPeekingCat from "../../assets/overlay/rest-peeking-cat.png";
+import { isFileSystemPath, isMacOSRuntime } from "../../platform/runtime";
 
 // 把绝对路径转成 Tauri 可消费的 src
 // （重复出现，提到顶部以便组件内多处复用）
@@ -18,6 +24,7 @@ type Props = {
   preview?: boolean;
   dismissible?: boolean;
   sessionId?: number;
+  trackOutcome?: boolean;
 };
 
 const formatClock = (seconds: number) => {
@@ -28,12 +35,6 @@ const formatClock = (seconds: number) => {
 
 // 真实文件系统绝对路径（用户导入素材 / Rust 生成的 poster），
 // 区别于 vite 打包出的 asset URL（预设图片）。后者不能当文件路径读盘。
-const isFileSystemPath = (filePath: string) =>
-  filePath.startsWith("/Users/") ||
-  filePath.startsWith("/private/") ||
-  filePath.startsWith("/var/") ||
-  filePath.startsWith("/Volumes/");
-
 const toMediaUrl = (filePath: string) => {
   if (!filePath) return "";
   if (isFileSystemPath(filePath) && isTauri()) {
@@ -62,13 +63,16 @@ export function BreakOverlay({
   style = "immersive",
   preview = false,
   dismissible = false,
-  sessionId = 0
+  sessionId = 0,
+  trackOutcome = false
 }: Props) {
   const previewSceneSeconds = Math.min(remainingSeconds, 5);
   const liveSeconds = useBreakOverlay(preview ? previewSceneSeconds : remainingSeconds, !preview, sessionId);
   const completionHandled = useRef(false);
   const suppressRecovery = useRef(false);
   const closeRequested = useRef(false);
+  const manualDismissRequested = useRef(false);
+  const outcomeNotified = useRef(false);
   const lastRenderableClip = useRef<SceneClip | null>(null);
   const liveSecondsRef = useRef(remainingSeconds);
   const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
@@ -76,13 +80,17 @@ export function BreakOverlay({
   const [phase, setPhase] = useState<OverlayPlaybackPhase>(() => (asset?.introClip ? "intro" : "loop"));
   const currentClip = clipForPhase(asset, phase);
   const effectiveClip = currentClip ?? (!preview && phase === "closing" ? lastRenderableClip.current : null);
-  const useNativeIntroLoopSequence = false;
-  const useNativeVideo = !preview && isTauri() && effectiveClip?.format === "mov_alpha";
+  const useNativeVideo =
+    !preview && isTauri() && isMacOSRuntime && effectiveClip?.format === "mov_alpha";
   const showImagePreview = preview && Boolean(effectiveClip?.previewImagePath);
   const showAnimatedImage = !preview && effectiveClip?.format === "apng_alpha";
-  const useTransparentImageOverlay = !preview && (showAnimatedImage || useNativeVideo);
   const showMovPreviewFallback = preview && effectiveClip?.format === "mov_alpha" && !effectiveClip?.previewImagePath;
   const dismissLabel = asset?.closeButtonLabel?.trim() || "小猫让开";
+  const restPrompt = message.trim() || "看看远处，活动一下肩颈";
+  const countdownMode = overlayCountdownMode(liveSeconds, remainingSeconds);
+  const restProgress = remainingSeconds > 0
+    ? Math.max(0, Math.min(1, liveSeconds / remainingSeconds))
+    : 0;
   // Seamless 双 video 叠层只用于：非预览、非原生 MOV、循环是 webm，且至少存在循环 clip。
   // 入场可有可无；存在时另起一层、由 onEnded 驱动切换，彻底避免「重新挂载-重新解码」造成的卡顿。
   const useSeamlessHtmlVideoStack =
@@ -92,19 +100,39 @@ export function BreakOverlay({
     Boolean(asset?.loopClip) &&
     asset?.loopClip.format === "webm_alpha" &&
     (!asset?.introClip || asset.introClip.format === "webm_alpha");
-  // 当入场 + 循环 都是 mov_alpha 时，原生侧走双层预热模式，
-  // 前端不应再为 intro→loop 切换发任何 update_overlay_media——
-  // 否则 Rust 会重新建一个单层 layer 把双层覆盖掉，反而带来卡顿。
-  const useNativeDualLayer =
+  const useTransparentImageOverlay =
+    !preview && (showAnimatedImage || useNativeVideo || useSeamlessHtmlVideoStack);
+  // 当 loop 是 mov_alpha，且 intro/outro 也是 mov_alpha 时，原生侧走多层预热模式。
+  // 前端不再为 phase 切换发 update_overlay_media，避免在衔接点重建播放器。
+  const useNativeLayerSequence =
     !preview &&
     isTauri() &&
-    asset?.introClip?.format === "mov_alpha" &&
-    asset?.loopClip.format === "mov_alpha";
+    isMacOSRuntime &&
+    asset?.loopClip.format === "mov_alpha" &&
+    (!asset.introClip || asset.introClip.format === "mov_alpha") &&
+    (!asset.outroClip || asset.outroClip.format === "mov_alpha") &&
+    Boolean(asset?.introClip || asset?.outroClip);
   const outroVideoRef = useRef<HTMLVideoElement | null>(null);
 
   useEffect(() => {
     liveSecondsRef.current = liveSeconds;
   }, [liveSeconds]);
+
+  const notifyBreakOutcome = (outcome: BreakOutcome) => {
+    if (preview || !trackOutcome || outcomeNotified.current) return;
+    outcomeNotified.current = true;
+    const actualSeconds =
+      outcome === "completed"
+        ? remainingSeconds
+        : Math.max(0, remainingSeconds - liveSecondsRef.current);
+    void emitTo("main", "break-outcome", {
+      sessionId,
+      outcome,
+      occurredAt: new Date().toISOString(),
+      actualSeconds,
+      plannedSeconds: remainingSeconds
+    }).catch(() => undefined);
+  };
 
   const beginClosing = () => {
     if (!completionHandled.current) {
@@ -113,21 +141,27 @@ export function BreakOverlay({
       setPhase("closing");
     }
     if (!preview) {
-      void invoke("hide_overlay").catch(() => undefined);
+      void invoke(manualDismissRequested.current ? "hide_overlay_silently" : "hide_overlay").catch(() => undefined);
     }
   };
 
-  const requestDismiss = () => {
-    if (phase === "closing") {
-      beginClosing();
-      return;
-    }
-    if (phase === "outro") {
-      beginClosing();
-      return;
-    }
+  const requestDismiss = (reason: "manual" | "timer" = "manual") => {
+    const action = overlayDismissAction(
+      phase,
+      Boolean(asset?.outroClip),
+      closeRequested.current
+    );
+    if (action === "ignore") return;
+
     closeRequested.current = true;
-    if (asset?.outroClip) {
+    if (reason === "manual") {
+      manualDismissRequested.current = true;
+      notifyBreakOutcome("deferred");
+    } else {
+      notifyBreakOutcome("completed");
+    }
+
+    if (action === "play_outro") {
       setPhase("outro");
     } else {
       beginClosing();
@@ -139,8 +173,10 @@ export function BreakOverlay({
     completionHandled.current = false;
     suppressRecovery.current = false;
     closeRequested.current = false;
+    manualDismissRequested.current = false;
+    outcomeNotified.current = false;
     lastRenderableClip.current = null;
-  }, [asset?.id, remainingSeconds, sessionId]);
+  }, [asset?.id, remainingSeconds, sessionId, trackOutcome]);
 
   useEffect(() => {
     if (currentClip) {
@@ -225,7 +261,7 @@ export function BreakOverlay({
 
   useEffect(() => {
     if (preview || liveSeconds > 0) return;
-    requestDismiss();
+    requestDismiss("timer");
   }, [liveSeconds, preview, phase, asset?.outroClip]);
 
   useEffect(() => {
@@ -233,9 +269,9 @@ export function BreakOverlay({
     // 双 video 叠层模式下由 intro <video> 的 onEnded 精准触发切换，不再用 setTimeout。
     if (useSeamlessHtmlVideoStack) return;
     const timer = window.setTimeout(() => {
-      // 原生双层模式下 Rust 自管时序，前端只更新 phase；
+      // 原生多层模式下 Rust 自管时序，前端只更新 phase；
       // 单层 mov_alpha 才需要 invoke 切换。
-      if (!preview && isTauri() && asset.loopClip.format === "mov_alpha" && !useNativeDualLayer) {
+      if (!preview && isTauri() && asset.loopClip.format === "mov_alpha" && !useNativeLayerSequence) {
         void invoke("update_overlay_media", {
           media: {
             filePath: asset.loopClip.filePath,
@@ -249,7 +285,7 @@ export function BreakOverlay({
       setPhase("loop");
     }, Math.max(100, Math.round(asset.introClip.durationSeconds * 1000)));
     return () => window.clearTimeout(timer);
-  }, [asset?.introClip, asset?.loopClip.filePath, asset?.loopClip.format, phase, preview, useSeamlessHtmlVideoStack, useNativeDualLayer]);
+  }, [asset?.introClip, asset?.loopClip.filePath, asset?.loopClip.format, phase, preview, useSeamlessHtmlVideoStack, useNativeLayerSequence]);
 
   useEffect(() => {
     if (phase !== "outro" || !asset?.outroClip) return;
@@ -264,6 +300,11 @@ export function BreakOverlay({
     }, Math.max(100, Math.round(asset.outroClip.durationSeconds * 1000)));
     return () => window.clearTimeout(timer);
   }, [phase, asset?.introClip, asset?.outroClip, preview, useSeamlessHtmlVideoStack]);
+
+  useEffect(() => {
+    if (preview || phase !== "outro" || !asset?.outroClip || !useNativeLayerSequence) return;
+    void invoke("play_overlay_outro").catch(() => undefined);
+  }, [asset?.outroClip, phase, preview, useNativeLayerSequence]);
 
   // 进入 outro 时，imperatively 把预挂载的 outro video 从头播放
   useEffect(() => {
@@ -290,10 +331,9 @@ export function BreakOverlay({
   useEffect(() => {
     if (preview || !isTauri()) return;
     if (phase === "closing") return;
-    if (useNativeIntroLoopSequence && phase === "loop") return;
-    // 原生双层模式下 Rust 在 show_overlay 阶段一次性建好两个 layer，
-    // 中途切换会摧毁双层、重建单层，反而引入卡顿。直接跳过。
-    if (useNativeDualLayer && (phase === "intro" || phase === "loop")) return;
+    // 原生多层模式下 Rust 在 show_overlay 阶段一次性建好 layer，
+    // 中途切换会摧毁多层、重建单层，反而引入卡顿。直接跳过。
+    if (useNativeLayerSequence && (phase === "intro" || phase === "loop" || phase === "outro")) return;
     const clip = effectiveClip;
     if (!clip) return;
     void invoke("update_overlay_media", {
@@ -301,17 +341,18 @@ export function BreakOverlay({
         filePath: clip.filePath,
         format: clip.format,
         shouldLoop: phase === "loop",
-        nextFilePath: useNativeIntroLoopSequence && phase === "intro" ? asset?.loopClip.filePath : null,
-        nextFormat: useNativeIntroLoopSequence && phase === "intro" ? asset?.loopClip.format : null
+        nextFilePath: null,
+        nextFormat: null
       }
     }).catch(() => undefined);
-  }, [asset?.loopClip.filePath, asset?.loopClip.format, effectiveClip?.id, effectiveClip?.filePath, effectiveClip?.format, phase, preview, useNativeIntroLoopSequence, useNativeDualLayer]);
+  }, [effectiveClip?.id, effectiveClip?.filePath, effectiveClip?.format, phase, preview, useNativeLayerSequence]);
 
   useEffect(() => {
     if (preview || !dismissible || !isTauri()) return;
 
     const appWindow = getCurrentWindow();
     let unlisten: (() => void) | undefined;
+    let disposed = false;
 
     void appWindow.setAlwaysOnTop(true).catch(() => undefined);
     void appWindow.onFocusChanged(({ payload: focused }) => {
@@ -322,10 +363,15 @@ export function BreakOverlay({
         }, 120);
       }
     }).then((cleanup) => {
-      unlisten = cleanup;
+      if (disposed) {
+        cleanup();
+      } else {
+        unlisten = cleanup;
+      }
     });
 
     return () => {
+      disposed = true;
       unlisten?.();
     };
   }, [dismissible, preview, sessionId]);
@@ -442,21 +488,52 @@ export function BreakOverlay({
             <div className="overlay__placeholder">Pick an asset</div>
           ) : null}
         </div>
-        <div className="overlay__hud">
-          {message.trim() ? <p className="overlay__message">{message}</p> : null}
-          <h3>{formatClock(liveSeconds)}</h3>
-          {dismissible ? (
-            <button
-              type="button"
-              className="secondary overlay__dismiss"
-              onClick={() => {
-                requestDismiss();
-              }}
-            >
-              {dismissLabel}
-            </button>
-          ) : null}
-        </div>
+        {!preview && phase !== "outro" && phase !== "closing" ? (
+          <div
+            className={[
+              "overlay__hud",
+              "overlay-countdown-card",
+              `overlay-countdown-card--${countdownMode}`
+            ].join(" ")}
+            data-countdown-mode={countdownMode}
+          >
+            <img
+              className="overlay-countdown-card__cat"
+              src={restPeekingCat}
+              alt=""
+              aria-hidden="true"
+            />
+            <div className="overlay-countdown-card__status">
+              <span aria-hidden="true" />
+              休息中
+            </div>
+            <p className="overlay-countdown-card__label">休息剩余</p>
+            <h3 aria-live={countdownMode === "ending" ? "polite" : "off"}>
+              {formatClock(liveSeconds)}
+            </h3>
+            <div className="overlay-countdown-card__progress">
+              <span className="overlay-countdown-card__track" aria-hidden="true">
+                <span style={{ width: `${restProgress * 100}%` }} />
+              </span>
+              <span>{formatClock(remainingSeconds)}</span>
+            </div>
+            <p className="overlay-countdown-card__prompt">
+              <Leaf size={16} strokeWidth={2.2} aria-hidden="true" />
+              <span>{restPrompt}</span>
+            </p>
+            {dismissible ? (
+              <button
+                type="button"
+                className="secondary overlay__dismiss"
+                onClick={() => {
+                  requestDismiss();
+                }}
+              >
+                {dismissLabel}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     </div>
   );

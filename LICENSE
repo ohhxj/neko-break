@@ -1,0 +1,32 @@
+Neko Break Source Available License
+
+Copyright (c) 2026 小水
+
+This repository is published as source-available software. It is not licensed
+under an OSI-approved open source license.
+
+You may:
+
+1. Read, study, and reference the source code for personal learning.
+2. Run the application locally for personal use.
+3. Submit issues, suggestions, and pull requests to the upstream project.
+4. Share links to the official repository and official release downloads.
+
+You may not, without prior written permission from the author:
+
+1. Sell, rent, sublicense, or commercially provide this software or a derivative.
+2. Redistribute modified or unmodified binaries outside the official release channels.
+3. Publish a competing product or clone that is substantially based on this project.
+4. Remove or replace the Neko Break name, icons, community links, support links, or author attribution in a redistributed version.
+5. Reuse the bundled artwork, icons, mascot images, media presets, QR codes, or other visual assets outside this project.
+6. Use this project to train models, generate datasets, or build automated code-reuse systems without permission.
+
+Contributions submitted to this repository may be used by the project maintainer
+in Neko Break, including in future public or commercial versions.
+
+This software is provided "as is", without warranty of any kind. The author is
+not liable for any claim, damages, or other liability arising from use of the
+software.
+
+For commercial licensing, redistribution permission, or collaboration, contact
+the maintainer through the official repository.

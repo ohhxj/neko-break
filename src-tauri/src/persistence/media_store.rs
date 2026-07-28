@@ -1,4 +1,6 @@
-use crate::domain::media::{ensure_scene_previews, LegacyMediaAsset, SceneAsset};
+use crate::domain::media::{
+    ensure_managed_scene_media, ensure_scene_previews, LegacyMediaAsset, SceneAsset,
+};
 use serde_json::Value;
 use std::path::PathBuf;
 use tauri::Manager;
@@ -18,10 +20,12 @@ fn parse_scene_items(contents: &str) -> Result<Vec<SceneAsset>, String> {
         return Ok(Vec::new());
     };
 
-    items.iter()
+    items
+        .iter()
         .map(|item| {
             if item.get("loopClip").is_some() {
-                serde_json::from_value::<SceneAsset>(item.clone()).map_err(|error| error.to_string())
+                serde_json::from_value::<SceneAsset>(item.clone())
+                    .map_err(|error| error.to_string())
             } else {
                 serde_json::from_value::<LegacyMediaAsset>(item.clone())
                     .map(SceneAsset::from_legacy)
@@ -37,23 +41,30 @@ pub async fn load_all(app: &tauri::AppHandle) -> Result<Vec<SceneAsset>, String>
         Ok(contents) => {
             let mut scenes = parse_scene_items(&contents)?;
             for scene in &mut scenes {
+                ensure_managed_scene_media(app, scene).await;
                 ensure_scene_previews(app, scene).await;
             }
-            let payload = serde_json::to_string_pretty(&scenes).map_err(|error| error.to_string())?;
+            let payload =
+                serde_json::to_string_pretty(&scenes).map_err(|error| error.to_string())?;
             if let Some(parent) = path.parent() {
-                fs::create_dir_all(parent).await.map_err(|error| error.to_string())?;
+                fs::create_dir_all(parent)
+                    .await
+                    .map_err(|error| error.to_string())?;
             }
-            fs::write(&path, payload).await.map_err(|error| error.to_string())?;
+            fs::write(&path, payload)
+                .await
+                .map_err(|error| error.to_string())?;
             Ok(scenes)
         }
         Err(_) => Ok(Vec::new()),
     }
 }
 
-pub async fn upsert(app: &tauri::AppHandle, asset: &SceneAsset) -> Result<(), String> {
+pub async fn upsert(app: &tauri::AppHandle, asset: &SceneAsset) -> Result<SceneAsset, String> {
     let path = media_path(app)?;
     let mut items = load_all(app).await?;
     let mut asset = asset.clone();
+    ensure_managed_scene_media(app, &mut asset).await;
     ensure_scene_previews(app, &mut asset).await;
     if let Some(index) = items.iter().position(|item| item.id == asset.id) {
         items[index] = asset.clone();
@@ -61,10 +72,15 @@ pub async fn upsert(app: &tauri::AppHandle, asset: &SceneAsset) -> Result<(), St
         items.push(asset.clone());
     }
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).await.map_err(|error| error.to_string())?;
+        fs::create_dir_all(parent)
+            .await
+            .map_err(|error| error.to_string())?;
     }
     let payload = serde_json::to_string_pretty(&items).map_err(|error| error.to_string())?;
-    fs::write(path, payload).await.map_err(|error| error.to_string())
+    fs::write(path, payload)
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(asset)
 }
 
 pub async fn delete(app: &tauri::AppHandle, scene_id: &str) -> Result<Vec<SceneAsset>, String> {
@@ -75,9 +91,13 @@ pub async fn delete(app: &tauri::AppHandle, scene_id: &str) -> Result<Vec<SceneA
         .filter(|item| item.id != scene_id || item.built_in)
         .collect();
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).await.map_err(|error| error.to_string())?;
+        fs::create_dir_all(parent)
+            .await
+            .map_err(|error| error.to_string())?;
     }
     let payload = serde_json::to_string_pretty(&items).map_err(|error| error.to_string())?;
-    fs::write(path, payload).await.map_err(|error| error.to_string())?;
+    fs::write(path, payload)
+        .await
+        .map_err(|error| error.to_string())?;
     Ok(items)
 }

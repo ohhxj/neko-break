@@ -10,7 +10,10 @@ pub async fn start_scheduler(state: State<'_, AppState>) -> Result<SchedulerSnap
         remaining_seconds: 90 * 60,
         active_break_seconds: 5 * 60,
     };
-    let mut guard = state.scheduler.lock().map_err(|_| "scheduler lock poisoned")?;
+    let mut guard = state
+        .scheduler
+        .lock()
+        .map_err(|_| "scheduler lock poisoned")?;
     *guard = snapshot.clone();
     Ok(snapshot)
 }
@@ -26,7 +29,10 @@ pub async fn delay_break(
         remaining_seconds: minutes * 60,
         active_break_seconds: 5 * 60,
     };
-    let mut guard = state.scheduler.lock().map_err(|_| "scheduler lock poisoned")?;
+    let mut guard = state
+        .scheduler
+        .lock()
+        .map_err(|_| "scheduler lock poisoned")?;
     *guard = snapshot.clone();
     Ok(snapshot)
 }
@@ -39,7 +45,10 @@ pub async fn pause_today(state: State<'_, AppState>) -> Result<SchedulerSnapshot
         remaining_seconds: 0,
         active_break_seconds: 5 * 60,
     };
-    let mut guard = state.scheduler.lock().map_err(|_| "scheduler lock poisoned")?;
+    let mut guard = state
+        .scheduler
+        .lock()
+        .map_err(|_| "scheduler lock poisoned")?;
     *guard = snapshot.clone();
     Ok(snapshot)
 }

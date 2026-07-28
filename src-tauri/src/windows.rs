@@ -27,7 +27,9 @@ pub fn show_overlay_window(
     }
 
     let window = overlay_window(app).ok_or("overlay window missing")?;
-    window.set_always_on_top(true).map_err(|error| error.to_string())?;
+    window
+        .set_always_on_top(true)
+        .map_err(|error| error.to_string())?;
     window
         .set_fullscreen(false)
         .map_err(|error| error.to_string())?;
@@ -96,7 +98,7 @@ fn position_floating_overlay(window: &WebviewWindow) -> Result<(), String> {
     window
         .set_position(LogicalPosition::new(
             x.max(monitor_position.x + 24.0),
-            y.max(monitor_position.y + 24.0)
+            y.max(monitor_position.y + 24.0),
         ))
         .map_err(|error| error.to_string())
 }
@@ -141,6 +143,25 @@ pub fn hide_overlay_window(app: &tauri::AppHandle) -> Result<(), String> {
         crate::native_overlay::teardown_overlay_video(app).map_err(|error| error.to_string())?;
     }
     show_main_window(app)
+}
+
+pub fn hide_overlay_window_silently(app: &tauri::AppHandle) -> Result<(), String> {
+    if let Some(window) = overlay_window(app) {
+        window.hide().map_err(|error| error.to_string())?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        crate::native_overlay::teardown_overlay_video(app).map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+pub fn play_overlay_outro(app: &tauri::AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        crate::native_overlay::play_overlay_outro(app).map_err(|error| error.to_string())?;
+    }
+    Ok(())
 }
 
 pub fn update_overlay_media(

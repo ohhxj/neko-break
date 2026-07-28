@@ -6,6 +6,12 @@ export type AppSettings = {
   launchAtLogin: boolean;
   allowDelayOnce: boolean;
   allowPauseToday: boolean;
+  doNotDisturbEnabled: boolean;
+  doNotDisturbStart: string;
+  doNotDisturbEnd: string;
+  companionEnabled: boolean;
+  companionStart: string;
+  companionEnd: string;
   defaultSceneId: string | null;
   overlayStyle: OverlayStyle;
 };

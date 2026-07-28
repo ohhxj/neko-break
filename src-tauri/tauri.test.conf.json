@@ -1,0 +1,32 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Neko Break Test",
+  "identifier": "com.reshui.mac-break-reminder.test.final",
+  "build": {
+    "beforeBuildCommand": "VITE_SKIP_SETUP=true npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Neko Break Test",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 1280,
+        "minHeight": 800,
+        "resizable": false
+      },
+      {
+        "label": "overlay",
+        "title": "Neko Break Test - Break Time",
+        "fullscreen": false,
+        "visible": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": false
+      }
+    ]
+  }
+}

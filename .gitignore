@@ -3,3 +3,23 @@ dist
 src-tauri/target
 .DS_Store
 tmp/
+
+# Local build and QA artifacts
+local-build/
+output/
+.playwright-cli/
+website/
+
+# Editor / machine-local files
+.vscode/
+.idea/
+*.log
+
+# Secrets and signing material
+.env
+.env.*
+*.p12
+*.pfx
+*.mobileprovision
+*.cer
+*.key

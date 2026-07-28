@@ -7,12 +7,16 @@ import type { MediaAsset, SceneClip } from "./types";
 // 解析成绝对路径后传入，走原生 AVPlayerLayer 双层无缝衔接。
 export const RAGDOLL_PRESET_ID = "preset-ragdoll-standlie";
 
-export const makeRagdollMovScene = (introPath: string, loopPath: string): MediaAsset => {
+const makeRagdollScene = (
+  introPath: string,
+  loopPath: string,
+  format: SceneClip["format"]
+): MediaAsset => {
   const introClip: SceneClip = {
     id: `${RAGDOLL_PRESET_ID}-intro`,
     filePath: introPath,
     previewImagePath: previewRagdollClean,
-    format: "mov_alpha",
+    format,
     durationSeconds: 4.866667,
     fileSizeBytes: 5_169_961,
     pixelWidth: 1920,
@@ -23,7 +27,7 @@ export const makeRagdollMovScene = (introPath: string, loopPath: string): MediaA
     id: `${RAGDOLL_PRESET_ID}-loop`,
     filePath: loopPath,
     previewImagePath: ragdollLoopCover,
-    format: "mov_alpha",
+    format,
     durationSeconds: 4.533333,
     fileSizeBytes: 3_549_161,
     pixelWidth: 1920,
@@ -36,7 +40,7 @@ export const makeRagdollMovScene = (introPath: string, loopPath: string): MediaA
     name: "布偶猫 · 站立躺下",
     filePath: loopClip.filePath,
     previewImagePath: ragdollLoopCover,
-    format: "mov_alpha",
+    format,
     durationSeconds: loopClip.durationSeconds,
     fileSizeBytes: loopClip.fileSizeBytes,
     pixelWidth: 1920,
@@ -53,6 +57,12 @@ export const makeRagdollMovScene = (introPath: string, loopPath: string): MediaA
     closeButtonLabel: "小猫让开"
   };
 };
+
+export const makeRagdollMovScene = (introPath: string, loopPath: string) =>
+  makeRagdollScene(introPath, loopPath, "mov_alpha");
+
+export const makeRagdollWebmScene = (introPath: string, loopPath: string) =>
+  makeRagdollScene(introPath, loopPath, "webm_alpha");
 
 // 旧的 webm 预设已移除：VP9-alpha 在 macOS WebView 无法透明合成（黑底），
 // 现仅保留运行时注入的 mov-alpha 预设。

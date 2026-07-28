@@ -1,5 +1,5 @@
-use crate::windows;
 use crate::tray;
+use crate::windows;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -18,6 +18,9 @@ pub struct NativeOverlayMedia {
     pub intro_duration_ms: Option<u64>,
     pub loop_file_path: Option<String>,
     pub loop_format: Option<String>,
+    pub outro_file_path: Option<String>,
+    pub outro_format: Option<String>,
+    pub outro_duration_ms: Option<u64>,
 }
 
 #[tauri::command]
@@ -32,6 +35,16 @@ pub fn show_overlay(
 #[tauri::command]
 pub fn hide_overlay(app: tauri::AppHandle) -> Result<(), String> {
     windows::hide_overlay_window(&app)
+}
+
+#[tauri::command]
+pub fn hide_overlay_silently(app: tauri::AppHandle) -> Result<(), String> {
+    windows::hide_overlay_window_silently(&app)
+}
+
+#[tauri::command]
+pub fn play_overlay_outro(app: tauri::AppHandle) -> Result<(), String> {
+    windows::play_overlay_outro(&app)
 }
 
 #[tauri::command]

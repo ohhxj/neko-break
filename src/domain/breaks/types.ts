@@ -1,4 +1,5 @@
 import type { MediaAsset } from "../media/types";
+import type { BreakRecord } from "../break-history/types";
 import type { OverlayStyle } from "../settings/types";
 
 export type BreakState =
@@ -6,6 +7,8 @@ export type BreakState =
   | "counting"
   | "break_active"
   | "delayed"
+  | "quiet_hours"
+  | "outside_companion_hours"
   | "paused_today";
 
 export type SchedulerSnapshot = {
@@ -21,6 +24,9 @@ export type OverlayPayload = {
   message: string;
   style: OverlayStyle;
   sessionId: number;
+  trackOutcome: boolean;
 };
+
+export type BreakOutcomePayload = BreakRecord;
 
 export type OverlayPlaybackPhase = "intro" | "loop" | "outro" | "closing";

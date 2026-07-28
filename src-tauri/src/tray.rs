@@ -1,25 +1,36 @@
 use crate::windows;
 use tauri::image::Image;
-use tauri::menu::MenuEvent;
-use tauri::menu::{Menu, MenuItem};
+use tauri::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Wry};
+use std::sync::{Mutex, OnceLock};
 
+const ITEM_STATUS: &str = "tray_status";
 const ITEM_OPEN: &str = "tray_open";
 const ITEM_START_BREAK: &str = "tray_start_break";
 const ITEM_PAUSE_TODAY: &str = "tray_pause_today";
 const ITEM_QUIT: &str = "tray_quit";
 const TRAY_ID: &str = "break-reminder-tray";
 
+struct TrayMenuItems {
+    status: MenuItem<Wry>,
+    pause_today: MenuItem<Wry>,
+}
+
+static TRAY_MENU_ITEMS: OnceLock<Mutex<TrayMenuItems>> = OnceLock::new();
+
 pub fn create_tray(app: &AppHandle<Wry>) -> tauri::Result<()> {
-    let open = MenuItem::with_id(app, ITEM_OPEN, "Open Dashboard", true, None::<&str>)?;
+    let status = MenuItem::with_id(app, ITEM_STATUS, "Neko Break 已就绪", false, None::<&str>)?;
+    let open = MenuItem::with_id(app, ITEM_OPEN, "打开 Neko Break", true, None::<&str>)?;
     let start_break =
-        MenuItem::with_id(app, ITEM_START_BREAK, "Start Break Now", true, None::<&str>)?;
-    let pause_today =
-        MenuItem::with_id(app, ITEM_PAUSE_TODAY, "Pause Today", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, ITEM_QUIT, "Quit", true, None::<&str>)?;
+        MenuItem::with_id(app, ITEM_START_BREAK, "立即休息", true, None::<&str>)?;
+    let pause_today = MenuItem::with_id(app, ITEM_PAUSE_TODAY, "暂停今日提醒", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, ITEM_QUIT, "退出 Neko Break", true, None::<&str>)?;
+    let separator = PredefinedMenuItem::separator(app)?;
 
     let menu = Menu::new(app)?;
+    menu.append(&status)?;
+    menu.append(&separator)?;
     menu.append(&open)?;
     menu.append(&start_break)?;
     menu.append(&pause_today)?;
@@ -62,6 +73,10 @@ pub fn create_tray(app: &AppHandle<Wry>) -> tauri::Result<()> {
     }
 
     let _ = builder.build(app)?;
+    let _ = TRAY_MENU_ITEMS.set(Mutex::new(TrayMenuItems {
+        status,
+        pause_today,
+    }));
     Ok(())
 }
 
@@ -73,30 +88,45 @@ pub fn set_tray_tooltip(app: &AppHandle<Wry>, tooltip: &str) -> tauri::Result<()
 }
 
 pub fn set_tray_title(app: &AppHandle<Wry>, title: &str) -> tauri::Result<()> {
+    #[cfg(not(target_os = "windows"))]
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
         tray.set_title(Some(title))?;
+    }
+    if let Some(items) = TRAY_MENU_ITEMS.get() {
+        let status = if title.trim().is_empty() {
+            "Neko Break 已就绪".to_string()
+        } else {
+            format!("距离下次休息 {title}")
+        };
+        items
+            .lock()
+            .map_err(|_| tauri::Error::AssetNotFound(ITEM_STATUS.into()))?
+            .status
+            .set_text(status)?;
     }
     Ok(())
 }
 
 pub fn set_pause_menu_label(app: &AppHandle<Wry>, label: &str) -> tauri::Result<()> {
-    if let Some(menu) = app.menu() {
-        if let Some(item) = menu.get(ITEM_PAUSE_TODAY) {
-            item.as_menuitem()
-                .ok_or_else(|| tauri::Error::AssetNotFound(ITEM_PAUSE_TODAY.into()))?
-                .set_text(label)?;
-        }
+    let _ = app;
+    if let Some(items) = TRAY_MENU_ITEMS.get() {
+        items
+            .lock()
+            .map_err(|_| tauri::Error::AssetNotFound(ITEM_PAUSE_TODAY.into()))?
+            .pause_today
+            .set_text(label)?;
     }
     Ok(())
 }
 
 pub fn set_pause_menu_enabled(app: &AppHandle<Wry>, enabled: bool) -> tauri::Result<()> {
-    if let Some(menu) = app.menu() {
-        if let Some(item) = menu.get(ITEM_PAUSE_TODAY) {
-            item.as_menuitem()
-                .ok_or_else(|| tauri::Error::AssetNotFound(ITEM_PAUSE_TODAY.into()))?
-                .set_enabled(enabled)?;
-        }
+    let _ = app;
+    if let Some(items) = TRAY_MENU_ITEMS.get() {
+        items
+            .lock()
+            .map_err(|_| tauri::Error::AssetNotFound(ITEM_PAUSE_TODAY.into()))?
+            .pause_today
+            .set_enabled(enabled)?;
     }
     Ok(())
 }

@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Neko Break",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "identifier": "com.reshui.mac-break-reminder",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -15,9 +15,11 @@
       {
         "label": "main",
         "title": "Neko Break",
-        "width": 1160,
+        "width": 1280,
         "height": 800,
-        "resizable": true
+        "minWidth": 1280,
+        "minHeight": 800,
+        "resizable": false
       },
       {
         "label": "overlay",
@@ -26,11 +28,20 @@
         "visible": false,
         "decorations": false,
         "transparent": true,
-        "alwaysOnTop": true
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": false
       }
     ],
     "security": {
-      "capabilities": ["default"]
+      "capabilities": ["default"],
+      "assetProtocol": {
+        "enable": true,
+        "scope": [
+          "$APPCONFIG/**",
+          "$RESOURCE/**"
+        ]
+      }
     }
   },
   "bundle": {
@@ -41,7 +52,13 @@
     ],
     "icon": [
       "icons/icon.png",
-      "icons/icon.icns"
-    ]
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "macOS": {
+      "files": {
+        "Resources/zh-Hans.lproj/Localizable.strings": "localizations/zh-Hans.lproj/Localizable.strings"
+      }
+    }
   }
 }

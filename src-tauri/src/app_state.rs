@@ -20,6 +20,7 @@ impl Default for AppState {
 #[cfg(target_os = "macos")]
 #[derive(Default)]
 pub struct NativeOverlayState {
+    pub generation: u64,
     // 主层（单层模式下唯一层；双层模式下作为循环层）
     pub layer_ptr: usize,
     pub player_ptr: usize,
@@ -27,4 +28,9 @@ pub struct NativeOverlayState {
     // 入场层（仅双层模式使用；单层时保持为 0）
     pub intro_layer_ptr: usize,
     pub intro_player_ptr: usize,
+    // 退场层（仅原生多层模式使用；单层时保持为 0）
+    pub outro_layer_ptr: usize,
+    pub outro_player_ptr: usize,
+    // 防止入场结束的延迟任务在退场开始后重新点亮循环层。
+    pub outro_started: bool,
 }

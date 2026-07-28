@@ -1,16 +1,12 @@
 #[cfg(target_os = "macos")]
 use crate::{app_state::AppState, commands::window::NativeOverlayMedia};
 #[cfg(target_os = "macos")]
-use objc2::{
-    rc::Retained,
-    runtime::AnyObject,
-    MainThreadMarker,
-};
+use objc2::{rc::Retained, runtime::AnyObject, MainThreadMarker};
 #[cfg(target_os = "macos")]
 use objc2_app_kit::{NSColor, NSWindow};
 #[cfg(target_os = "macos")]
 use objc2_av_foundation::{
-    AVLayerVideoGravityResizeAspect, AVPlayerLayer, AVPlayerLooper, AVPlayerItem, AVQueuePlayer,
+    AVLayerVideoGravityResizeAspect, AVPlayerItem, AVPlayerLayer, AVPlayerLooper, AVQueuePlayer,
 };
 #[cfg(target_os = "macos")]
 use objc2_foundation::NSURL;
@@ -29,26 +25,37 @@ pub fn sync_overlay_video(
         return Ok(());
     };
 
-    // 优先尝试双层（入场 + 循环）模式：两个 path 都给出且格式都是 mov_alpha。
-    let dual = match (
-        media.intro_file_path.as_ref(),
-        media.loop_file_path.as_ref(),
-    ) {
-        (Some(intro_path), Some(loop_path))
-            if media.intro_format.as_deref() == Some("mov_alpha")
-                && media.loop_format.as_deref() == Some("mov_alpha") =>
-        {
-            Some((
-                intro_path.clone(),
-                loop_path.clone(),
-                media.intro_duration_ms.unwrap_or(0),
-            ))
-        }
-        _ => None,
-    };
+    // 优先尝试原生多层模式：loop 必须是 mov_alpha，intro/outro 可选但给出时也必须是 mov_alpha。
+    let native_sequence = media
+        .loop_file_path
+        .as_ref()
+        .filter(|_| media.loop_format.as_deref() == Some("mov_alpha"))
+        .and_then(|loop_path| {
+            let intro = match (
+                media.intro_file_path.as_ref(),
+                media.intro_format.as_deref(),
+            ) {
+                (Some(path), Some("mov_alpha")) => {
+                    Some((path.clone(), media.intro_duration_ms.unwrap_or(0)))
+                }
+                (None, _) => None,
+                _ => return None,
+            };
+            let outro = match (
+                media.outro_file_path.as_ref(),
+                media.outro_format.as_deref(),
+            ) {
+                (Some(path), Some("mov_alpha")) => {
+                    Some((path.clone(), media.outro_duration_ms.unwrap_or(0)))
+                }
+                (None, _) => None,
+                _ => return None,
+            };
+            Some((intro, loop_path.clone(), outro))
+        });
 
-    if let Some((intro_path, loop_path, intro_duration_ms)) = dual {
-        return setup_dual_layer(app, window, intro_path, loop_path, intro_duration_ms);
+    if let Some((intro, loop_path, outro)) = native_sequence {
+        return setup_native_sequence(app, window, intro, loop_path, outro);
     }
 
     // 兜底：旧的单层逻辑
@@ -74,6 +81,7 @@ pub fn sync_overlay_video(
     let should_chain_into_loop =
         next_file_path.is_some() && next_format.as_deref() == Some("mov_alpha");
 
+    let generation = bump_native_overlay_generation(app);
     let app_handle = app.clone();
     let window_handle = window.clone();
     app.run_on_main_thread(move || unsafe {
@@ -99,7 +107,11 @@ pub fn sync_overlay_video(
         };
 
         let initial_item = AVPlayerItem::playerItemWithURL(&url, mtm);
-        let player = AVQueuePlayer::playerWithPlayerItem(Some(&initial_item), mtm);
+        let player = if should_loop && !should_chain_into_loop {
+            AVQueuePlayer::playerWithPlayerItem(None, mtm)
+        } else {
+            AVQueuePlayer::playerWithPlayerItem(Some(&initial_item), mtm)
+        };
         player.setMuted(true);
         player.setAllowsExternalPlayback(false);
         player.setAutomaticallyWaitsToMinimizeStalling(false);
@@ -112,9 +124,14 @@ pub fn sync_overlay_video(
                 return;
             };
             let loop_item = AVPlayerItem::playerItemWithURL(&loop_url, mtm);
-            Some(AVPlayerLooper::playerLooperWithPlayer_templateItem(&player, &loop_item))
+            Some(AVPlayerLooper::playerLooperWithPlayer_templateItem(
+                &player, &loop_item,
+            ))
         } else if should_loop {
-            Some(AVPlayerLooper::playerLooperWithPlayer_templateItem(&player, &initial_item))
+            Some(AVPlayerLooper::playerLooperWithPlayer_templateItem(
+                &player,
+                &initial_item,
+            ))
         } else {
             None
         };
@@ -138,18 +155,20 @@ pub fn sync_overlay_video(
         }
 
         player.play();
-        replace_native_overlay_objects(&app_handle, layer, player, looper);
+        replace_native_overlay_objects(&app_handle, generation, layer, player, looper);
     })
 }
 
 #[cfg(target_os = "macos")]
-fn setup_dual_layer(
+fn setup_native_sequence(
     app: &tauri::AppHandle,
     window: &WebviewWindow,
-    intro_path: String,
+    intro: Option<(String, u64)>,
     loop_path: String,
-    intro_duration_ms: u64,
+    outro: Option<(String, u64)>,
 ) -> tauri::Result<()> {
+    let generation = bump_native_overlay_generation(app);
+    let intro_duration_ms = intro.as_ref().map(|(_, duration)| *duration).unwrap_or(0);
     let app_handle = app.clone();
     let window_handle = window.clone();
     app.run_on_main_thread(move || unsafe {
@@ -195,52 +214,92 @@ fn setup_dual_layer(
             CAAutoresizingMask::LayerWidthSizable | CAAutoresizingMask::LayerHeightSizable,
         );
         loop_layer.setFrame(content_view.bounds());
-        // 循环层先隐藏，避免它的静止首帧透过入场层的透明区与入场的猫重叠
-        loop_layer.setOpacity(0.0);
+        // 有入场层时 loop 先隐藏；没有入场时 loop 直接显示并播放。
+        loop_layer.setOpacity(if intro.is_some() { 0.0 } else { 1.0 });
 
-        // -- 入场层：单次播放 AVPlayer --
-        let Some(intro_url) = NSURL::from_file_path(&intro_path) else {
-            return;
+        // -- 入场层：单次播放 AVPlayer，可选 --
+        let intro_objects = if let Some((intro_path, _)) = intro.as_ref() {
+            let Some(intro_url) = NSURL::from_file_path(intro_path) else {
+                return;
+            };
+            let intro_item = AVPlayerItem::playerItemWithURL(&intro_url, mtm);
+            let intro_player = AVQueuePlayer::playerWithPlayerItem(Some(&intro_item), mtm);
+            intro_player.setMuted(true);
+            intro_player.setAllowsExternalPlayback(false);
+            intro_player.setAutomaticallyWaitsToMinimizeStalling(false);
+
+            let intro_layer = AVPlayerLayer::playerLayerWithPlayer(Some(&intro_player));
+            if let Some(video_gravity) = AVLayerVideoGravityResizeAspect {
+                intro_layer.setVideoGravity(video_gravity);
+            }
+            intro_layer.setOpaque(false);
+            intro_layer.setNeedsDisplayOnBoundsChange(true);
+            intro_layer.setAutoresizingMask(
+                CAAutoresizingMask::LayerWidthSizable | CAAutoresizingMask::LayerHeightSizable,
+            );
+            intro_layer.setFrame(content_view.bounds());
+            intro_layer.setOpacity(1.0);
+            Some((intro_layer, intro_player))
+        } else {
+            None
         };
-        let intro_item = AVPlayerItem::playerItemWithURL(&intro_url, mtm);
-        let intro_player = AVQueuePlayer::playerWithPlayerItem(Some(&intro_item), mtm);
-        intro_player.setMuted(true);
-        intro_player.setAllowsExternalPlayback(false);
-        intro_player.setAutomaticallyWaitsToMinimizeStalling(false);
 
-        let intro_layer = AVPlayerLayer::playerLayerWithPlayer(Some(&intro_player));
-        if let Some(video_gravity) = AVLayerVideoGravityResizeAspect {
-            intro_layer.setVideoGravity(video_gravity);
-        }
-        intro_layer.setOpaque(false);
-        intro_layer.setNeedsDisplayOnBoundsChange(true);
-        intro_layer.setAutoresizingMask(
-            CAAutoresizingMask::LayerWidthSizable | CAAutoresizingMask::LayerHeightSizable,
-        );
-        intro_layer.setFrame(content_view.bounds());
+        // -- 退场层：单次播放 AVPlayer，可选，默认隐藏 --
+        let outro_objects = if let Some((outro_path, _)) = outro.as_ref() {
+            let Some(outro_url) = NSURL::from_file_path(outro_path) else {
+                return;
+            };
+            let outro_item = AVPlayerItem::playerItemWithURL(&outro_url, mtm);
+            let outro_player = AVQueuePlayer::playerWithPlayerItem(Some(&outro_item), mtm);
+            outro_player.setMuted(true);
+            outro_player.setAllowsExternalPlayback(false);
+            outro_player.setAutomaticallyWaitsToMinimizeStalling(false);
 
-        // 挂载：循环层在底（addSublayer 先调用），入场层在上
+            let outro_layer = AVPlayerLayer::playerLayerWithPlayer(Some(&outro_player));
+            if let Some(video_gravity) = AVLayerVideoGravityResizeAspect {
+                outro_layer.setVideoGravity(video_gravity);
+            }
+            outro_layer.setOpaque(false);
+            outro_layer.setNeedsDisplayOnBoundsChange(true);
+            outro_layer.setAutoresizingMask(
+                CAAutoresizingMask::LayerWidthSizable | CAAutoresizingMask::LayerHeightSizable,
+            );
+            outro_layer.setFrame(content_view.bounds());
+            outro_layer.setOpacity(0.0);
+            Some((outro_layer, outro_player))
+        } else {
+            None
+        };
+
+        // 挂载：循环层在底，入场和退场层在上。退场层最后挂载，关闭时可覆盖 loop。
         content_view.setWantsLayer(true);
         if let Some(host_layer) = content_view.layer() {
             host_layer.setOpaque(false);
             host_layer.setBackgroundColor(None);
             host_layer.setMasksToBounds(false);
             host_layer.addSublayer(&loop_layer);
-            host_layer.addSublayer(&intro_layer);
+            if let Some((intro_layer, _)) = intro_objects.as_ref() {
+                host_layer.addSublayer(intro_layer);
+            }
+            if let Some((outro_layer, _)) = outro_objects.as_ref() {
+                host_layer.addSublayer(outro_layer);
+            }
         }
 
-        // 关键改动：循环层【不】提前播放。它停在第 0 帧（新建 player 默认即在 0）、
-        // 保持隐藏，由 AVQueuePlayer 自动缓冲首帧。等入场结束的瞬间再从第 0 帧启动，
-        // 保证「入场最后一帧 → 循环第 0 帧」姿势连续、不跳变。
-        intro_player.play();
+        if let Some((_, intro_player)) = intro_objects.as_ref() {
+            intro_player.play();
+        } else {
+            loop_player.play();
+        }
 
-        replace_native_overlay_dual_objects(
+        replace_native_overlay_sequence_objects(
             &app_handle,
-            intro_layer,
-            intro_player,
+            generation,
+            intro_objects,
             loop_layer,
             loop_player,
             loop_looper,
+            outro_objects,
         );
     })?;
 
@@ -252,7 +311,7 @@ fn setup_dual_layer(
             tokio::time::sleep(std::time::Duration::from_millis(intro_duration_ms)).await;
             let app_for_main = app_for_swap.clone();
             let _ = app_for_swap.run_on_main_thread(move || unsafe {
-                swap_intro_to_loop(&app_for_main);
+                swap_intro_to_loop(&app_for_main, generation);
             });
         });
     }
@@ -261,12 +320,16 @@ fn setup_dual_layer(
 }
 
 #[cfg(target_os = "macos")]
-unsafe fn swap_intro_to_loop(app: &tauri::AppHandle) {
+unsafe fn swap_intro_to_loop(app: &tauri::AppHandle, generation: u64) {
     let state = app.state::<AppState>();
     let overlay = state
         .native_overlay
         .lock()
         .expect("native overlay mutex poisoned");
+
+    if overlay.generation != generation || overlay.outro_started {
+        return;
+    }
 
     // 用 CATransaction 禁用隐式动画，保证 opacity 翻转是「同帧硬切」，
     // 而不是默认的 ~0.25s 渐隐（渐隐期间两层都半透明 → 正是闪动/重叠的来源）。
@@ -294,6 +357,56 @@ unsafe fn swap_intro_to_loop(app: &tauri::AppHandle) {
     CATransaction::commit();
 }
 
+#[cfg(target_os = "macos")]
+pub fn play_overlay_outro(app: &tauri::AppHandle) -> tauri::Result<()> {
+    let app_handle = app.clone();
+    app.run_on_main_thread(move || unsafe {
+        swap_loop_to_outro(&app_handle);
+    })
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn play_overlay_outro(_app: &tauri::AppHandle) -> tauri::Result<()> {
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+unsafe fn swap_loop_to_outro(app: &tauri::AppHandle) {
+    let state = app.state::<AppState>();
+    let mut overlay = state
+        .native_overlay
+        .lock()
+        .expect("native overlay mutex poisoned");
+
+    if overlay.outro_started || overlay.outro_layer_ptr == 0 || overlay.outro_player_ptr == 0 {
+        return;
+    }
+    overlay.outro_started = true;
+
+    CATransaction::begin();
+    CATransaction::setDisableActions(true);
+
+    if overlay.layer_ptr != 0 {
+        let loop_layer = &*(overlay.layer_ptr as *mut AVPlayerLayer);
+        loop_layer.setOpacity(0.0);
+    }
+    if overlay.player_ptr != 0 {
+        let loop_player = &*(overlay.player_ptr as *mut AVQueuePlayer);
+        loop_player.pause();
+    }
+    if overlay.intro_layer_ptr != 0 {
+        let intro_layer = &*(overlay.intro_layer_ptr as *mut AVPlayerLayer);
+        intro_layer.setOpacity(0.0);
+    }
+
+    let outro_layer = &*(overlay.outro_layer_ptr as *mut AVPlayerLayer);
+    outro_layer.setOpacity(1.0);
+    let outro_player = &*(overlay.outro_player_ptr as *mut AVQueuePlayer);
+    outro_player.play();
+
+    CATransaction::commit();
+}
+
 #[cfg(not(target_os = "macos"))]
 pub fn sync_overlay_video(
     _app: &tauri::AppHandle,
@@ -317,30 +430,53 @@ pub fn teardown_overlay_video(_app: &tauri::AppHandle) -> tauri::Result<()> {
 }
 
 #[cfg(target_os = "macos")]
+fn bump_native_overlay_generation(app: &tauri::AppHandle) -> u64 {
+    let state = app.state::<AppState>();
+    let mut overlay = state
+        .native_overlay
+        .lock()
+        .expect("native overlay mutex poisoned");
+    overlay.generation = overlay.generation.wrapping_add(1);
+    overlay.outro_started = false;
+    overlay.generation
+}
+
+#[cfg(target_os = "macos")]
 unsafe fn release_native_overlay_objects(app: &tauri::AppHandle) {
     let state = app.state::<AppState>();
     let mut overlay = state
         .native_overlay
         .lock()
         .expect("native overlay mutex poisoned");
+    overlay.generation = overlay.generation.wrapping_add(1);
     let layer_ptr = overlay.layer_ptr;
     let player_ptr = overlay.player_ptr;
     let looper_ptr = overlay.looper_ptr;
     let intro_layer_ptr = overlay.intro_layer_ptr;
     let intro_player_ptr = overlay.intro_player_ptr;
+    let outro_layer_ptr = overlay.outro_layer_ptr;
+    let outro_player_ptr = overlay.outro_player_ptr;
     overlay.layer_ptr = 0;
     overlay.player_ptr = 0;
     overlay.looper_ptr = 0;
     overlay.intro_layer_ptr = 0;
     overlay.intro_player_ptr = 0;
+    overlay.outro_layer_ptr = 0;
+    overlay.outro_player_ptr = 0;
+    overlay.outro_started = false;
     drop(overlay);
 
     release_intro_layer_raw(intro_layer_ptr, intro_player_ptr);
+    release_intro_layer_raw(outro_layer_ptr, outro_player_ptr);
     release_native_overlay_objects_raw(layer_ptr, player_ptr, looper_ptr);
 }
 
 #[cfg(target_os = "macos")]
-unsafe fn release_native_overlay_objects_raw(layer_ptr: usize, player_ptr: usize, looper_ptr: usize) {
+unsafe fn release_native_overlay_objects_raw(
+    layer_ptr: usize,
+    player_ptr: usize,
+    looper_ptr: usize,
+) {
     if layer_ptr != 0 {
         let layer = &*(layer_ptr as *mut AVPlayerLayer);
         layer.removeFromSuperlayer();
@@ -379,37 +515,10 @@ unsafe fn release_intro_layer_raw(intro_layer_ptr: usize, intro_player_ptr: usiz
 #[cfg(target_os = "macos")]
 unsafe fn replace_native_overlay_objects(
     app: &tauri::AppHandle,
+    generation: u64,
     layer: Retained<AVPlayerLayer>,
     player: Retained<AVQueuePlayer>,
     looper: Option<Retained<AVPlayerLooper>>,
-) {
-    let state = app.state::<AppState>();
-    let mut overlay = state.native_overlay.lock().expect("native overlay mutex poisoned");
-    let old_layer_ptr = overlay.layer_ptr;
-    let old_player_ptr = overlay.player_ptr;
-    let old_looper_ptr = overlay.looper_ptr;
-    let old_intro_layer_ptr = overlay.intro_layer_ptr;
-    let old_intro_player_ptr = overlay.intro_player_ptr;
-    overlay.layer_ptr = Retained::into_raw(layer) as *mut AnyObject as usize;
-    overlay.player_ptr = Retained::into_raw(player) as *mut AnyObject as usize;
-    overlay.looper_ptr = looper
-        .map(|value| Retained::into_raw(value) as *mut AnyObject as usize)
-        .unwrap_or(0);
-    overlay.intro_layer_ptr = 0;
-    overlay.intro_player_ptr = 0;
-    drop(overlay);
-    release_intro_layer_raw(old_intro_layer_ptr, old_intro_player_ptr);
-    release_native_overlay_objects_raw(old_layer_ptr, old_player_ptr, old_looper_ptr);
-}
-
-#[cfg(target_os = "macos")]
-unsafe fn replace_native_overlay_dual_objects(
-    app: &tauri::AppHandle,
-    intro_layer: Retained<AVPlayerLayer>,
-    intro_player: Retained<AVQueuePlayer>,
-    loop_layer: Retained<AVPlayerLayer>,
-    loop_player: Retained<AVQueuePlayer>,
-    loop_looper: Retained<AVPlayerLooper>,
 ) {
     let state = app.state::<AppState>();
     let mut overlay = state
@@ -421,12 +530,74 @@ unsafe fn replace_native_overlay_dual_objects(
     let old_looper_ptr = overlay.looper_ptr;
     let old_intro_layer_ptr = overlay.intro_layer_ptr;
     let old_intro_player_ptr = overlay.intro_player_ptr;
+    let old_outro_layer_ptr = overlay.outro_layer_ptr;
+    let old_outro_player_ptr = overlay.outro_player_ptr;
+    overlay.generation = generation;
+    overlay.layer_ptr = Retained::into_raw(layer) as *mut AnyObject as usize;
+    overlay.player_ptr = Retained::into_raw(player) as *mut AnyObject as usize;
+    overlay.looper_ptr = looper
+        .map(|value| Retained::into_raw(value) as *mut AnyObject as usize)
+        .unwrap_or(0);
+    overlay.intro_layer_ptr = 0;
+    overlay.intro_player_ptr = 0;
+    overlay.outro_layer_ptr = 0;
+    overlay.outro_player_ptr = 0;
+    overlay.outro_started = false;
+    drop(overlay);
+    release_intro_layer_raw(old_intro_layer_ptr, old_intro_player_ptr);
+    release_intro_layer_raw(old_outro_layer_ptr, old_outro_player_ptr);
+    release_native_overlay_objects_raw(old_layer_ptr, old_player_ptr, old_looper_ptr);
+}
+
+#[cfg(target_os = "macos")]
+unsafe fn replace_native_overlay_sequence_objects(
+    app: &tauri::AppHandle,
+    generation: u64,
+    intro_objects: Option<(Retained<AVPlayerLayer>, Retained<AVQueuePlayer>)>,
+    loop_layer: Retained<AVPlayerLayer>,
+    loop_player: Retained<AVQueuePlayer>,
+    loop_looper: Retained<AVPlayerLooper>,
+    outro_objects: Option<(Retained<AVPlayerLayer>, Retained<AVQueuePlayer>)>,
+) {
+    let state = app.state::<AppState>();
+    let mut overlay = state
+        .native_overlay
+        .lock()
+        .expect("native overlay mutex poisoned");
+    let old_layer_ptr = overlay.layer_ptr;
+    let old_player_ptr = overlay.player_ptr;
+    let old_looper_ptr = overlay.looper_ptr;
+    let old_intro_layer_ptr = overlay.intro_layer_ptr;
+    let old_intro_player_ptr = overlay.intro_player_ptr;
+    let old_outro_layer_ptr = overlay.outro_layer_ptr;
+    let old_outro_player_ptr = overlay.outro_player_ptr;
+    overlay.generation = generation;
     overlay.layer_ptr = Retained::into_raw(loop_layer) as *mut AnyObject as usize;
     overlay.player_ptr = Retained::into_raw(loop_player) as *mut AnyObject as usize;
     overlay.looper_ptr = Retained::into_raw(loop_looper) as *mut AnyObject as usize;
-    overlay.intro_layer_ptr = Retained::into_raw(intro_layer) as *mut AnyObject as usize;
-    overlay.intro_player_ptr = Retained::into_raw(intro_player) as *mut AnyObject as usize;
+    let (intro_layer_ptr, intro_player_ptr) = intro_objects
+        .map(|(layer, player)| {
+            (
+                Retained::into_raw(layer) as *mut AnyObject as usize,
+                Retained::into_raw(player) as *mut AnyObject as usize,
+            )
+        })
+        .unwrap_or((0, 0));
+    let (outro_layer_ptr, outro_player_ptr) = outro_objects
+        .map(|(layer, player)| {
+            (
+                Retained::into_raw(layer) as *mut AnyObject as usize,
+                Retained::into_raw(player) as *mut AnyObject as usize,
+            )
+        })
+        .unwrap_or((0, 0));
+    overlay.intro_layer_ptr = intro_layer_ptr;
+    overlay.intro_player_ptr = intro_player_ptr;
+    overlay.outro_layer_ptr = outro_layer_ptr;
+    overlay.outro_player_ptr = outro_player_ptr;
+    overlay.outro_started = false;
     drop(overlay);
     release_intro_layer_raw(old_intro_layer_ptr, old_intro_player_ptr);
+    release_intro_layer_raw(old_outro_layer_ptr, old_outro_player_ptr);
     release_native_overlay_objects_raw(old_layer_ptr, old_player_ptr, old_looper_ptr);
 }

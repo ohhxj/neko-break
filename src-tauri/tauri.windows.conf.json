@@ -1,0 +1,52 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Neko Break",
+  "identifier": "com.reshui.mac-break-reminder",
+  "build": {
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Neko Break",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 1280,
+        "minHeight": 800,
+        "resizable": false,
+        "center": true
+      },
+      {
+        "label": "overlay",
+        "title": "Neko Break - Break Time",
+        "fullscreen": false,
+        "visible": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": false
+      }
+    ]
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "nsis",
+      "msi"
+    ],
+    "resources": [
+      "resources/presets/*"
+    ],
+    "icon": [
+      "icons/icon.ico",
+      "icons/icon.png"
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    }
+  }
+}

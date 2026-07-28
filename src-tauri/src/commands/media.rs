@@ -32,14 +32,21 @@ pub async fn import_media(
     duration_seconds: f32,
     pixel_width: u32,
     pixel_height: u32,
+    preview_image_data_url: Option<String>,
 ) -> Result<SceneAsset, String> {
-    let asset = media::import_asset(&app, &file_path, duration_seconds, pixel_width, pixel_height)
-        .await
-        .map_err(|error| error.to_string())?;
+    let asset = media::import_asset(
+        &app,
+        &file_path,
+        duration_seconds,
+        pixel_width,
+        pixel_height,
+        preview_image_data_url.as_deref(),
+    )
+    .await
+    .map_err(|error| error.to_string())?;
     media_store::upsert(&app, &asset)
         .await
-        .map_err(|error| error.to_string())?;
-    Ok(asset)
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -49,8 +56,17 @@ pub async fn import_clip(
     duration_seconds: f32,
     pixel_width: u32,
     pixel_height: u32,
+    preview_image_data_url: Option<String>,
 ) -> Result<SceneClip, String> {
-    media::import_clip(&app, &file_path, duration_seconds, pixel_width, pixel_height).await
+    media::import_clip(
+        &app,
+        &file_path,
+        duration_seconds,
+        pixel_width,
+        pixel_height,
+        preview_image_data_url.as_deref(),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -58,17 +74,18 @@ pub fn probe_media(file_path: String) -> Result<MediaProbeResult, String> {
     media::probe_asset(&file_path)
 }
 
-
 #[tauri::command]
 pub async fn save_scene(app: tauri::AppHandle, scene: SceneAsset) -> Result<SceneAsset, String> {
     media_store::upsert(&app, &scene)
         .await
-        .map_err(|error| error.to_string())?;
-    Ok(scene)
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
-pub async fn delete_scene(app: tauri::AppHandle, scene_id: String) -> Result<Vec<SceneAsset>, String> {
+pub async fn delete_scene(
+    app: tauri::AppHandle,
+    scene_id: String,
+) -> Result<Vec<SceneAsset>, String> {
     media_store::delete(&app, &scene_id)
         .await
         .map_err(|error| error.to_string())
