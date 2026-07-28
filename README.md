@@ -12,8 +12,8 @@ Neko Break 是一个可爱的桌面休息提醒工具。它会按你设置的节
 
 | 平台 | 安装包 | 说明 |
 | --- | --- | --- |
-| macOS Apple Silicon | `Neko Break_0.1.1_aarch64.dmg` | 适用于 M 系列芯片 Mac |
-| Windows x64 | `Neko Break_0.1.1_x64-setup.exe` | 适用于 64 位 Windows |
+| macOS Apple Silicon | `Neko.Break_0.1.1_aarch64.dmg` | 适用于 M 系列芯片 Mac |
+| Windows x64 | `Neko.Break_0.1.1_x64-setup.exe` | 适用于 64 位 Windows |
 
 当前安装包暂未做代码签名。macOS 首次打开时可能需要在系统设置中允许打开，Windows 可能会出现安全提示。
 

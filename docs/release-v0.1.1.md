@@ -4,8 +4,8 @@
 
 ## 下载
 
-- macOS Apple Silicon: `Neko Break_0.1.1_aarch64.dmg`
-- Windows x64: `Neko Break_0.1.1_x64-setup.exe`
+- macOS Apple Silicon: `Neko.Break_0.1.1_aarch64.dmg`
+- Windows x64: `Neko.Break_0.1.1_x64-setup.exe`
 
 ## 主要功能
 
