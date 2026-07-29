@@ -8,7 +8,7 @@ Neko Break 是一个可爱的桌面休息提醒工具。它会按你设置的节
 
 正式安装包会发布在 GitHub Releases：
 
-[下载最新版 Neko Break](https://github.com/ohhxj/mac-break-reminder/releases/latest)
+[下载最新版 Neko Break](https://github.com/ohhxj/neko-break/releases/latest)
 
 | 平台 | 安装包 | 说明 |
 | --- | --- | --- |
