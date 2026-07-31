@@ -8,7 +8,7 @@ import { Button } from "../components/Button";
 import { WalkingCatCursor } from "../components/WalkingCatCursor";
 import { RestFishCursor } from "../components/RestFishCursor";
 import { Heart, Play, Save } from "lucide-react";
-import { brandName, buildVersion } from "../domain/brand";
+import { brandName } from "../domain/brand";
 import { createSettingsStore } from "../domain/settings/store";
 import { defaultSettings } from "../domain/settings/defaults";
 import type { AppSettings } from "../domain/settings/types";
@@ -748,7 +748,6 @@ export function App() {
             <p className="eyebrow">当前配置</p>
             <h3>
               {selectedAsset ? `默认场景：${selectedAsset.name}` : "挑一只喜欢的小猫开始吧"}
-              <span className="app-version">{buildVersion}</span>
             </h3>
             <p>{encouragementCopy(scheduler.state)}</p>
           </div>

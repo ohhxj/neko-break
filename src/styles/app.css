@@ -199,8 +199,11 @@ body {
 
 body.overlay-window,
 #root.overlay-window {
+  width: 100vw;
+  min-width: 0;
   background: transparent !important;
   min-height: 100vh;
+  overflow: hidden;
 }
 
 button,
@@ -239,22 +242,6 @@ button:disabled {
 button.secondary {
   background: #e7ded0;
   color: #173129;
-}
-
-.app-version {
-  display: inline-flex;
-  align-items: center;
-  min-height: 20px;
-  margin-left: 10px;
-  padding: 2px 8px;
-  border: 1px solid rgba(31, 122, 99, 0.18);
-  border-radius: 999px;
-  background: rgba(31, 122, 99, 0.08);
-  color: rgba(23, 49, 41, 0.72);
-  font-size: 11px;
-  font-weight: 800;
-  line-height: 1;
-  vertical-align: middle;
 }
 
 .shell {
@@ -2155,10 +2142,10 @@ h3 {
 }
 
 .overlay--native-transparent .overlay__video-stack {
-  width: 100%;
-  height: 100%;
-  max-width: none;
-  max-height: none;
+  width: auto;
+  height: auto;
+  max-width: min(86vw, 1420px);
+  max-height: min(92vh, 980px);
 }
 
 .overlay--native-transparent .overlay__video-stack-layer {
@@ -2166,6 +2153,13 @@ h3 {
   height: 100%;
   max-width: none;
   max-height: none;
+}
+
+.overlay--native-transparent .overlay__video-stack-layer:first-child {
+  width: auto;
+  height: auto;
+  max-width: min(86vw, 1420px);
+  max-height: min(92vh, 980px);
 }
 
 .overlay__placeholder {
@@ -7952,8 +7946,7 @@ body:not(.overlay-window) .media-more-card strong {
 }
 
 /* Bottom configuration bar. */
-body:not(.overlay-window) .cta-panel .eyebrow,
-body:not(.overlay-window) .app-version {
+body:not(.overlay-window) .cta-panel .eyebrow {
   font-size: var(--type-micro);
   line-height: var(--leading-control);
 }
