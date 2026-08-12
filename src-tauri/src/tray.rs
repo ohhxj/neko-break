@@ -23,6 +23,21 @@ struct TrayMenuItems {
 static TRAY_MENU_ITEMS: OnceLock<Mutex<TrayMenuItems>> = OnceLock::new();
 static TRAY_COUNTDOWN: OnceLock<Mutex<Option<TrayCountdown>>> = OnceLock::new();
 
+/// Menu mutations synchronously dispatch onto the macOS main thread. Copy the handles while the
+/// registry is locked, then release it before making those calls so a main-thread IPC request
+/// cannot deadlock with the background countdown refresher.
+fn menu_item_handles() -> tauri::Result<Option<(MenuItem<Wry>, MenuItem<Wry>)>> {
+    TRAY_MENU_ITEMS
+        .get()
+        .map(|items| {
+            let items = items
+                .lock()
+                .map_err(|_| tauri::Error::AssetNotFound(ITEM_STATUS.into()))?;
+            Ok((items.status.clone(), items.pause_today.clone()))
+        })
+        .transpose()
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TrayCountdownState {
     Idle,
@@ -127,41 +142,29 @@ pub fn set_tray_title(app: &AppHandle<Wry>, title: &str) -> tauri::Result<()> {
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
         tray.set_title(Some(title))?;
     }
-    if let Some(items) = TRAY_MENU_ITEMS.get() {
+    if let Some((status_item, _)) = menu_item_handles()? {
         let status = if title.trim().is_empty() {
             "Neko Break 已就绪".to_string()
         } else {
             format!("距离下次休息 {title}")
         };
-        items
-            .lock()
-            .map_err(|_| tauri::Error::AssetNotFound(ITEM_STATUS.into()))?
-            .status
-            .set_text(status)?;
+        status_item.set_text(status)?;
     }
     Ok(())
 }
 
 pub fn set_pause_menu_label(app: &AppHandle<Wry>, label: &str) -> tauri::Result<()> {
     let _ = app;
-    if let Some(items) = TRAY_MENU_ITEMS.get() {
-        items
-            .lock()
-            .map_err(|_| tauri::Error::AssetNotFound(ITEM_PAUSE_TODAY.into()))?
-            .pause_today
-            .set_text(label)?;
+    if let Some((_, pause_today)) = menu_item_handles()? {
+        pause_today.set_text(label)?;
     }
     Ok(())
 }
 
 pub fn set_pause_menu_enabled(app: &AppHandle<Wry>, enabled: bool) -> tauri::Result<()> {
     let _ = app;
-    if let Some(items) = TRAY_MENU_ITEMS.get() {
-        items
-            .lock()
-            .map_err(|_| tauri::Error::AssetNotFound(ITEM_PAUSE_TODAY.into()))?
-            .pause_today
-            .set_enabled(enabled)?;
+    if let Some((_, pause_today)) = menu_item_handles()? {
+        pause_today.set_enabled(enabled)?;
     }
     Ok(())
 }
@@ -248,19 +251,14 @@ fn apply_countdown_presentation(
         #[cfg(not(target_os = "windows"))]
         tray.set_title(Some(title))?;
     }
-    if let Some(items) = TRAY_MENU_ITEMS.get() {
-        let items = items
-            .lock()
-            .map_err(|_| tauri::Error::AssetNotFound(ITEM_STATUS.into()))?;
-        items.status.set_text(status)?;
-        items
-            .pause_today
-            .set_text(if state == TrayCountdownState::PausedToday {
-                "恢复提醒"
-            } else {
-                "今日暂停"
-            })?;
-        items.pause_today.set_enabled(true)?;
+    if let Some((status_item, pause_today)) = menu_item_handles()? {
+        status_item.set_text(status)?;
+        pause_today.set_text(if state == TrayCountdownState::PausedToday {
+            "恢复提醒"
+        } else {
+            "今日暂停"
+        })?;
+        pause_today.set_enabled(true)?;
     }
     Ok(())
 }
