@@ -149,10 +149,19 @@ export const synchronizeSchedulerAtTime = (
 ): SchedulerSnapshot => {
   if (
     snapshot.state === "idle" ||
-    snapshot.state === "paused_today" ||
-    snapshot.state === "break_active"
+    snapshot.state === "paused_today"
   ) {
     return snapshot;
+  }
+
+  if (snapshot.state === "break_active") {
+    if (!snapshot.breakEndsAt) return snapshot;
+    const breakEndsTimestamp = Date.parse(snapshot.breakEndsAt);
+    if (Number.isNaN(breakEndsTimestamp)) return snapshot;
+    return {
+      ...snapshot,
+      remainingSeconds: Math.max(0, Math.ceil((breakEndsTimestamp - at.getTime()) / 1000))
+    };
   }
 
   const scheduleAtNow = createScheduler(settings, at).start();

@@ -52,6 +52,8 @@ type Props = {
   ) => Promise<void>;
   onAssignClip: (asset: MediaAsset, slot: "intro" | "loop" | "outro") => Promise<void>;
   onClearClip: (asset: MediaAsset, slot: "intro" | "outro") => Promise<void>;
+  onAddInteraction: (asset: MediaAsset, name: string) => Promise<void>;
+  onRemoveInteraction: (asset: MediaAsset, interactionId: string) => Promise<void>;
 };
 
 export type SceneDraft = {
@@ -66,7 +68,7 @@ type LibraryFilter = "all" | "active" | "imported";
 
 type SceneEditorProps = Pick<
   Props,
-  "onRenameScene" | "onUpdateSceneMeta" | "onAssignClip" | "onClearClip" | "onTestPreview" | "onDeleteScene" | "onSelect"
+  "onRenameScene" | "onUpdateSceneMeta" | "onAssignClip" | "onClearClip" | "onAddInteraction" | "onRemoveInteraction" | "onTestPreview" | "onDeleteScene" | "onSelect"
 > & {
   asset: MediaAsset | null;
   selectedAssetId: string | null;
@@ -75,7 +77,7 @@ type SceneEditorProps = Pick<
 
 const visibleAssetCount = 3;
 const transparentMediaFormatHint = isWindowsRuntime
-  ? "Windows 仅支持带透明通道的 WebM 文件"
+  ? "Windows 支持透明 WebM；透明 MOV 会自动转换为 WebM"
   : isMacOSRuntime
     ? "macOS 仅支持带 Alpha 通道的 MOV 文件"
     : "macOS 使用 Alpha MOV，Windows 使用透明 WebM";
@@ -114,7 +116,9 @@ export function MediaLibraryScreen({
   onRenameScene,
   onUpdateSceneMeta,
   onAssignClip,
-  onClearClip
+  onClearClip,
+  onAddInteraction,
+  onRemoveInteraction
 }: Props) {
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
@@ -416,6 +420,8 @@ export function MediaLibraryScreen({
                     onUpdateSceneMeta={onUpdateSceneMeta}
                     onAssignClip={onAssignClip}
                     onClearClip={onClearClip}
+                    onAddInteraction={onAddInteraction}
+                    onRemoveInteraction={onRemoveInteraction}
                     onTestPreview={onTestPreview}
                     onDeleteScene={onDeleteScene}
                     onSelect={onSelect}
@@ -450,6 +456,8 @@ export function SceneEditor({
   onUpdateSceneMeta,
   onAssignClip,
   onClearClip,
+  onAddInteraction,
+  onRemoveInteraction,
   onTestPreview,
   onDeleteScene,
   onSelect,
@@ -458,10 +466,12 @@ export function SceneEditor({
 }: SceneEditorProps) {
   const [sceneNameDraft, setSceneNameDraft] = useState("");
   const [closeLabelDraft, setCloseLabelDraft] = useState("");
+  const [interactionNameDraft, setInteractionNameDraft] = useState("");
 
   useEffect(() => {
     setSceneNameDraft(asset?.name ?? "");
     setCloseLabelDraft(asset?.closeButtonLabel ?? "小猫让开");
+    setInteractionNameDraft("");
   }, [asset?.id, asset?.name, asset?.closeButtonLabel]);
 
   if (!asset) return null;
@@ -551,6 +561,46 @@ export function SceneEditor({
             onClear={asset.outroClip ? () => void onClearClip(asset, "outro") : undefined}
           />
         </div>
+        </section>
+        <section className="scene-editor-section">
+          <p className="eyebrow">互动动作</p>
+          <div className="scene-interactions">
+            <p className="info-text">为循环场景添加可选动作；休息弹窗右键即可触发，未添加时不会显示互动入口。</p>
+            {(asset.interactions ?? []).map((interaction) => (
+              <div className="scene-interaction" key={interaction.id}>
+                <div>
+                  <strong>{interaction.name}</strong>
+                  <small className="info-text">{clipDetail(interaction.clip)}</small>
+                </div>
+                <button type="button" className="secondary ghost" onClick={() => void onRemoveInteraction(asset, interaction.id)}>
+                  删除
+                </button>
+              </div>
+            ))}
+            <div className="scene-interaction-add">
+              <input
+                type="text"
+                value={interactionNameDraft}
+                maxLength={30}
+                placeholder="动作名称，例如：投喂"
+                onChange={(event) => setInteractionNameDraft(event.target.value)}
+              />
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                icon={<Plus aria-hidden="true" />}
+                disabled={!interactionNameDraft.trim()}
+                onClick={() => {
+                  const name = interactionNameDraft.trim();
+                  if (!name) return;
+                  void onAddInteraction(asset, name).then(() => setInteractionNameDraft(""));
+                }}
+              >
+                添加互动动作
+              </Button>
+            </div>
+          </div>
         </section>
         <section className="scene-editor-section scene-editor-preview">
           <div className="scene-editor-preview__actions">

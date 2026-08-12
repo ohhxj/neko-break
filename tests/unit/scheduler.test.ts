@@ -138,4 +138,23 @@ describe("createScheduler", () => {
     expect(synchronized.state).toBe("outside_companion_hours");
     expect(synchronized.remainingSeconds).toBe(15 * 60);
   });
+
+  it("uses the absolute break deadline after display sleep", () => {
+    const settings = defaultSettings;
+    const activeBreak = {
+      state: "break_active" as const,
+      nextBreakAt: null,
+      breakEndsAt: "2026-07-22T09:05:00.000Z",
+      remainingSeconds: 5 * 60,
+      activeBreakSeconds: 5 * 60
+    };
+
+    const synchronized = synchronizeSchedulerAtTime(
+      activeBreak,
+      settings,
+      new Date("2026-07-22T09:03:40.000Z")
+    );
+
+    expect(synchronized.remainingSeconds).toBe(80);
+  });
 });

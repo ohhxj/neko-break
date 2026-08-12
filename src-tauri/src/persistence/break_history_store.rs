@@ -28,7 +28,10 @@ pub async fn record(
 ) -> Result<Vec<BreakRecord>, String> {
     let path = history_path(app)?;
     let mut records = load(app).await?;
-    if records.iter().any(|item| item.session_id == record.session_id) {
+    if records
+        .iter()
+        .any(|item| item.session_id == record.session_id)
+    {
         return Ok(records);
     }
 

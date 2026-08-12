@@ -8,6 +8,7 @@ use mac_break_reminder_lib::{
     windows,
 };
 use tauri::RunEvent;
+use tokio::time::{self, Duration, MissedTickBehavior};
 
 fn main() {
     tauri::Builder::default()
@@ -36,6 +37,17 @@ fn main() {
                         .await;
                 }
             });
+            let app_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let mut refresh = time::interval(Duration::from_secs(1));
+                // The default Burst behavior replays ticks missed while macOS deprioritizes the
+                // hidden app, which makes the tray countdown visibly skip in rapid succession.
+                refresh.set_missed_tick_behavior(MissedTickBehavior::Skip);
+                loop {
+                    refresh.tick().await;
+                    let _ = tray::refresh_countdown(&app_handle);
+                }
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -60,6 +72,7 @@ fn main() {
             commands::window::update_tray_title,
             commands::window::update_tray_pause_label,
             commands::window::update_tray_pause_enabled,
+            commands::window::sync_tray_countdown,
             commands::scheduler::start_scheduler,
             commands::scheduler::delay_break,
             commands::scheduler::pause_today

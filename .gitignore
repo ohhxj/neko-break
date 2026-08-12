@@ -18,8 +18,13 @@ website/
 # Secrets and signing material
 .env
 .env.*
+.dev.vars
+.dev.vars.*
 *.p12
 *.pfx
 *.mobileprovision
 *.cer
 *.key
+ops/codex-bridge/
+ops/feishu-codex-worker/
+ops/feishu-longconn/state/

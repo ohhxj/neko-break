@@ -12,7 +12,7 @@ import { brandName } from "../domain/brand";
 import { createSettingsStore } from "../domain/settings/store";
 import { defaultSettings } from "../domain/settings/defaults";
 import type { AppSettings } from "../domain/settings/types";
-import type { MediaAsset } from "../domain/media/types";
+import type { MediaAsset, SceneInteraction } from "../domain/media/types";
 import type { OverlayPayload, SchedulerSnapshot } from "../domain/breaks/types";
 import type { BreakOutcomePayload } from "../domain/breaks/types";
 import type { BreakRecord } from "../domain/break-history/types";
@@ -39,12 +39,6 @@ import supportCoffeeCat from "../assets/decor/support-coffee-cat.png";
 import footerSleepingCat from "../assets/decor/footer-sleeping-cat.png";
 import alipayQr from "../assets/support/alipay-qr.png";
 import wechatQr from "../assets/support/wechat-qr.png";
-import {
-  countdownLabel,
-  trayPauseMenuLabel,
-  trayTitleLabel,
-  trayTooltipLabel
-} from "../features/menu-bar/status";
 import { createScheduler, synchronizeSchedulerAtTime } from "../domain/breaks/scheduler";
 import { reconcileSchedulerAfterSettingsChange } from "../domain/breaks/reconcile";
 import {
@@ -125,6 +119,7 @@ export function App() {
       asset?.loopClip.format === "mov_alpha" &&
       (!asset.introClip || asset.introClip.format === "mov_alpha") &&
       (!asset.outroClip || asset.outroClip.format === "mov_alpha") &&
+      !(asset.interactions?.length) &&
       Boolean(asset.introClip || asset.outroClip);
     const nativeMedia = useNativeLayerSequence
       ? {
@@ -165,6 +160,7 @@ export function App() {
       ...current,
       state: "break_active",
       remainingSeconds: durationSeconds,
+      breakEndsAt: new Date(Date.now() + durationSeconds * 1000).toISOString(),
       activeBreakSeconds: durationSeconds
     }));
     void emitTo("overlay", "break-preview", payload)
@@ -261,6 +257,7 @@ export function App() {
       introClip: draft.introClip,
       loopClip: draft.loopClip,
       outroClip: draft.outroClip,
+      interactions: [],
       overlayStyleHint: null,
       closeButtonLabel: null
     };
@@ -299,7 +296,7 @@ export function App() {
 
   const importClipFromDialog = async () => {
     const mediaFilter = isWindowsRuntime
-      ? { name: "透明 WebM（Windows）", extensions: ["webm"] }
+      ? { name: "透明 WebM / MOV（Windows 自动转换）", extensions: ["webm", "mov"] }
       : { name: "透明 MOV（macOS）", extensions: ["mov"] };
     const selected = await open({
       multiple: false,
@@ -307,6 +304,10 @@ export function App() {
       filters: [mediaFilter]
     });
     if (!selected || Array.isArray(selected)) return null;
+    const isWindowsMov = isWindowsRuntime && selected.toLowerCase().endsWith(".mov");
+    if (isWindowsMov) {
+      return mediaStore.importClip(selected, 0, 0, 0, null);
+    }
     const { durationSeconds, pixelWidth, pixelHeight } = await probeMediaFile(selected);
     const previewImageDataUrl = isWindowsRuntime ? await captureVideoPoster(selected) : null;
     return mediaStore.importClip(
@@ -335,17 +336,14 @@ export function App() {
         if (current.state === "paused_today" || current.state === "idle") return current;
         const now = new Date();
 
-        const synchronized =
-          current.state === "break_active"
-            ? current
-            : synchronizeSchedulerAtTime(current, settings, now);
+        const synchronized = synchronizeSchedulerAtTime(current, settings, now);
         if (
           synchronized.state === "quiet_hours" ||
           synchronized.state === "outside_companion_hours"
         ) return synchronized;
 
         const nextRemaining =
-          synchronized.state === "break_active"
+          synchronized.state === "break_active" && !synchronized.breakEndsAt
             ? Math.max(0, synchronized.remainingSeconds - 1)
             : synchronized.remainingSeconds;
 
@@ -368,6 +366,7 @@ export function App() {
           ...synchronized,
           state: "break_active",
           remainingSeconds: settings.breakMinutes * 60,
+          breakEndsAt: new Date(now.getTime() + settings.breakMinutes * 60 * 1000).toISOString(),
           activeBreakSeconds: settings.breakMinutes * 60
         };
       });
@@ -378,19 +377,16 @@ export function App() {
 
   useEffect(() => {
     if (!runningInTauri || currentWindowLabel !== "main") return;
-    void invoke("update_tray_tooltip", {
-      tooltip: trayTooltipLabel(scheduler)
+    const deadline = scheduler.state === "break_active"
+      ? scheduler.breakEndsAt
+      : scheduler.nextBreakAt;
+    const deadlineUnixMs = deadline ? Date.parse(deadline) : null;
+
+    void invoke("sync_tray_countdown", {
+      state: scheduler.state,
+      deadlineUnixMs: Number.isFinite(deadlineUnixMs) ? deadlineUnixMs : null
     }).catch(() => undefined);
-    void invoke("update_tray_title", {
-      title: trayTitleLabel(scheduler)
-    }).catch(() => undefined);
-    void invoke("update_tray_pause_label", {
-      label: trayPauseMenuLabel(scheduler.state)
-    }).catch(() => undefined);
-    void invoke("update_tray_pause_enabled", {
-      enabled: true
-    }).catch(() => undefined);
-  }, [scheduler, settings]);
+  }, [scheduler]);
 
   useEffect(() => {
     if (!runningInTauri || currentWindowLabel !== "overlay") return;
@@ -734,6 +730,35 @@ export function App() {
                   await saveScene(nextScene);
                 } catch (error) {
                   setImportError(error instanceof Error ? error.message : "清空片段失败了，请再试一次。");
+                }
+              }}
+              onAddInteraction={async (asset, name) => {
+                try {
+                  setImportError(null);
+                  const clip = await importClipFromDialog();
+                  if (!clip) return;
+                  const interaction: SceneInteraction = {
+                    id: `interaction-${Date.now()}`,
+                    name,
+                    clip
+                  };
+                  await saveScene({
+                    ...asset,
+                    interactions: [...(asset.interactions ?? []), interaction]
+                  });
+                } catch (error) {
+                  setImportError(error instanceof Error ? error.message : "添加互动动作失败了，请再试一次。");
+                }
+              }}
+              onRemoveInteraction={async (asset, interactionId) => {
+                try {
+                  setImportError(null);
+                  await saveScene({
+                    ...asset,
+                    interactions: (asset.interactions ?? []).filter((item) => item.id !== interactionId)
+                  });
+                } catch (error) {
+                  setImportError(error instanceof Error ? error.message : "删除互动动作失败了，请再试一次。");
                 }
               }}
             />

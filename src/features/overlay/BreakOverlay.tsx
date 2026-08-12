@@ -1,7 +1,7 @@
 import { convertFileSrc, invoke, isTauri } from "@tauri-apps/api/core";
 import { emitTo } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { primaryClip, type MediaAsset, type SceneClip } from "../../domain/media/types";
+import { primaryClip, type MediaAsset, type SceneClip, type SceneInteraction } from "../../domain/media/types";
 import type { OverlayPlaybackPhase } from "../../domain/breaks/types";
 import type { BreakOutcome } from "../../domain/break-history/types";
 import type { OverlayStyle } from "../../domain/settings/types";
@@ -73,12 +73,16 @@ export function BreakOverlay({
   const closeRequested = useRef(false);
   const manualDismissRequested = useRef(false);
   const outcomeNotified = useRef(false);
+  const nativeRecoveryArmed = useRef(false);
   const lastRenderableClip = useRef<SceneClip | null>(null);
   const liveSecondsRef = useRef(remainingSeconds);
   const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
   const [animatedImageUrl, setAnimatedImageUrl] = useState<string | null>(null);
   const [phase, setPhase] = useState<OverlayPlaybackPhase>(() => (asset?.introClip ? "intro" : "loop"));
-  const currentClip = clipForPhase(asset, phase);
+  const [activeInteraction, setActiveInteraction] = useState<SceneInteraction | null>(null);
+  const [interactionMenu, setInteractionMenu] = useState<{ x: number; y: number } | null>(null);
+  const interactions = asset?.interactions ?? [];
+  const currentClip = activeInteraction?.clip ?? clipForPhase(asset, phase);
   const effectiveClip = currentClip ?? (!preview && phase === "closing" ? lastRenderableClip.current : null);
   const useNativeVideo =
     !preview && isTauri() && isMacOSRuntime && effectiveClip?.format === "mov_alpha";
@@ -99,7 +103,8 @@ export function BreakOverlay({
     !showAnimatedImage &&
     Boolean(asset?.loopClip) &&
     asset?.loopClip.format === "webm_alpha" &&
-    (!asset?.introClip || asset.introClip.format === "webm_alpha");
+    (!asset?.introClip || asset.introClip.format === "webm_alpha") &&
+    interactions.length === 0;
   const useTransparentImageOverlay =
     !preview && (showAnimatedImage || useNativeVideo || useSeamlessHtmlVideoStack);
   // 当 loop 是 mov_alpha，且 intro/outro 也是 mov_alpha 时，原生侧走多层预热模式。
@@ -110,7 +115,8 @@ export function BreakOverlay({
     isMacOSRuntime &&
     asset?.loopClip.format === "mov_alpha" &&
     (!asset.introClip || asset.introClip.format === "mov_alpha") &&
-    (!asset.outroClip || asset.outroClip.format === "mov_alpha") &&
+      (!asset.outroClip || asset.outroClip.format === "mov_alpha") &&
+    interactions.length === 0 &&
     Boolean(asset?.introClip || asset?.outroClip);
   const outroVideoRef = useRef<HTMLVideoElement | null>(null);
 
@@ -176,6 +182,8 @@ export function BreakOverlay({
     manualDismissRequested.current = false;
     outcomeNotified.current = false;
     lastRenderableClip.current = null;
+    setActiveInteraction(null);
+    setInteractionMenu(null);
   }, [asset?.id, remainingSeconds, sessionId, trackOutcome]);
 
   useEffect(() => {
@@ -329,6 +337,14 @@ export function BreakOverlay({
   }, [preview, phase, asset?.outroClip]);
 
   useEffect(() => {
+    if (!activeInteraction) return;
+    const timer = window.setTimeout(() => {
+      setActiveInteraction(null);
+    }, Math.max(100, Math.round(activeInteraction.clip.durationSeconds * 1000)));
+    return () => window.clearTimeout(timer);
+  }, [activeInteraction]);
+
+  useEffect(() => {
     if (preview || !isTauri()) return;
     if (phase === "closing") return;
     // 原生多层模式下 Rust 在 show_overlay 阶段一次性建好 layer，
@@ -340,12 +356,12 @@ export function BreakOverlay({
       media: {
         filePath: clip.filePath,
         format: clip.format,
-        shouldLoop: phase === "loop",
+        shouldLoop: phase === "loop" && !activeInteraction,
         nextFilePath: null,
         nextFormat: null
       }
     }).catch(() => undefined);
-  }, [effectiveClip?.id, effectiveClip?.filePath, effectiveClip?.format, phase, preview, useNativeLayerSequence]);
+  }, [activeInteraction, effectiveClip?.id, effectiveClip?.filePath, effectiveClip?.format, phase, preview, useNativeLayerSequence]);
 
   useEffect(() => {
     if (preview || !dismissible || !isTauri()) return;
@@ -376,6 +392,46 @@ export function BreakOverlay({
     };
   }, [dismissible, preview, sessionId]);
 
+  useEffect(() => {
+    if (preview || !isTauri() || !useNativeVideo || phase !== "loop" || !effectiveClip) return;
+
+    const appWindow = getCurrentWindow();
+    let unlisten: (() => void) | undefined;
+    let disposed = false;
+    nativeRecoveryArmed.current = false;
+    // Ignore the focus event caused by initially presenting the overlay. Once
+    // armed, a later focus event is a reliable signal that macOS has returned
+    // from the lock screen and may have discarded the AVPlayerLayer surface.
+    const armTimer = window.setTimeout(() => {
+      nativeRecoveryArmed.current = true;
+    }, 1200);
+
+    void appWindow.onFocusChanged(({ payload: focused }) => {
+      if (!focused || !nativeRecoveryArmed.current) return;
+      void invoke("update_overlay_media", {
+        media: {
+          filePath: effectiveClip.filePath,
+          format: effectiveClip.format,
+          shouldLoop: true,
+          nextFilePath: null,
+          nextFormat: null
+        }
+      }).catch(() => undefined);
+    }).then((cleanup) => {
+      if (disposed) {
+        cleanup();
+      } else {
+        unlisten = cleanup;
+      }
+    });
+
+    return () => {
+      disposed = true;
+      window.clearTimeout(armTimer);
+      unlisten?.();
+    };
+  }, [effectiveClip?.filePath, effectiveClip?.format, phase, preview, useNativeVideo]);
+
   return (
     <div
       className={[
@@ -390,6 +446,12 @@ export function BreakOverlay({
       ]
         .filter(Boolean)
         .join(" ")}
+      onContextMenu={(event) => {
+        if (preview || interactions.length === 0 || phase !== "loop" || activeInteraction) return;
+        event.preventDefault();
+        setInteractionMenu({ x: event.clientX, y: event.clientY });
+      }}
+      onClick={() => interactionMenu && setInteractionMenu(null)}
     >
       <div className="overlay__surface">
         <div className="overlay__glow" />
@@ -477,7 +539,7 @@ export function BreakOverlay({
                 key={`${asset?.id ?? "scene"}-${phase}-${effectiveClip.filePath}`}
                 src={toMediaUrl(effectiveClip.filePath)}
                 autoPlay
-                loop={phase === "loop"}
+                loop={phase === "loop" && !activeInteraction}
                 muted
                 playsInline
               />
@@ -535,6 +597,30 @@ export function BreakOverlay({
           </div>
         ) : null}
       </div>
+      {interactionMenu ? (
+        <div
+          className="overlay__interaction-menu"
+          role="menu"
+          aria-label="互动动作"
+          style={{ left: interactionMenu.x, top: interactionMenu.y }}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <span>互动</span>
+          {interactions.map((interaction) => (
+            <button
+              type="button"
+              role="menuitem"
+              key={interaction.id}
+              onClick={() => {
+                setActiveInteraction(interaction);
+                setInteractionMenu(null);
+              }}
+            >
+              {interaction.name}
+            </button>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }

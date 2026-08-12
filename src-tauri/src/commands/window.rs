@@ -74,3 +74,12 @@ pub fn update_tray_pause_label(app: tauri::AppHandle, label: String) -> Result<(
 pub fn update_tray_pause_enabled(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
     tray::set_pause_menu_enabled(&app, enabled).map_err(|error| error.to_string())
 }
+
+#[tauri::command]
+pub fn sync_tray_countdown(
+    app: tauri::AppHandle,
+    state: String,
+    deadline_unix_ms: Option<i64>,
+) -> Result<(), String> {
+    tray::sync_countdown(&app, &state, deadline_unix_ms).map_err(|error| error.to_string())
+}

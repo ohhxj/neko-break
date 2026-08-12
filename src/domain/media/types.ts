@@ -12,6 +12,12 @@ export type SceneClip = {
   hasTransparency: boolean;
 };
 
+export type SceneInteraction = {
+  id: string;
+  name: string;
+  clip: SceneClip;
+};
+
 export type SceneAsset = {
   id: string;
   name: string;
@@ -30,6 +36,8 @@ export type SceneAsset = {
   introClip: SceneClip | null;
   loopClip: SceneClip;
   outroClip: SceneClip | null;
+  /** Optional one-shot actions available from the rest overlay's context menu. */
+  interactions: SceneInteraction[];
   overlayStyleHint: "floating" | "immersive" | null;
   closeButtonLabel: string | null;
 };
@@ -75,6 +83,7 @@ export const clipToScene = (
     hasTransparency: clip.hasTransparency
   },
   outroClip: null,
+  interactions: [],
   overlayStyleHint: null,
   closeButtonLabel: null
 });

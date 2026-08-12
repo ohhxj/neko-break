@@ -37,6 +37,7 @@
       "msi"
     ],
     "resources": [
+      "resources/bin/ffmpeg.exe",
       "resources/presets/*"
     ],
     "icon": [

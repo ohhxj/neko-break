@@ -53,6 +53,7 @@ const makeRagdollScene = (
     introClip,
     loopClip,
     outroClip: null,
+    interactions: [],
     overlayStyleHint: null,
     closeButtonLabel: "小猫让开"
   };

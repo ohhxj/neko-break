@@ -14,6 +14,8 @@ export type BreakState =
 export type SchedulerSnapshot = {
   state: BreakState;
   nextBreakAt: string | null;
+  /** Absolute end time for an active break; keeps countdowns correct after system sleep. */
+  breakEndsAt?: string | null;
   remainingSeconds: number;
   activeBreakSeconds: number;
 };

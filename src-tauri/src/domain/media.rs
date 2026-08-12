@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
+#[cfg(target_os = "windows")]
+use tauri::path::BaseDirectory;
 use tauri::Manager;
 use tokio::fs;
 
@@ -30,6 +32,14 @@ pub struct SceneClip {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SceneInteraction {
+    pub id: String,
+    pub name: String,
+    pub clip: SceneClip,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SceneAsset {
     pub id: String,
     pub name: String,
@@ -48,6 +58,8 @@ pub struct SceneAsset {
     pub intro_clip: Option<SceneClip>,
     pub loop_clip: SceneClip,
     pub outro_clip: Option<SceneClip>,
+    #[serde(default)]
+    pub interactions: Vec<SceneInteraction>,
     pub overlay_style_hint: Option<String>,
     pub close_button_label: Option<String>,
 }
@@ -102,6 +114,7 @@ impl SceneAsset {
             intro_clip: None,
             loop_clip,
             outro_clip: None,
+            interactions: Vec::new(),
             overlay_style_hint: None,
             close_button_label: None,
         }
@@ -196,6 +209,9 @@ pub async fn ensure_managed_scene_media(app: &tauri::AppHandle, scene: &mut Scen
     if let Some(outro) = scene.outro_clip.as_mut() {
         ensure_managed_clip(app, outro).await;
     }
+    for interaction in &mut scene.interactions {
+        ensure_managed_clip(app, &mut interaction.clip).await;
+    }
 
     scene.file_path = scene.loop_clip.file_path.clone();
     scene.format = scene.loop_clip.format.clone();
@@ -241,6 +257,16 @@ pub async fn ensure_scene_previews(app: &tauri::AppHandle, scene: &mut SceneAsse
             match generate_preview_image(app, &outro.file_path, &stem, stamp + 2).await {
                 Ok(path) => outro.preview_image_path = Some(path),
                 Err(error) => eprintln!("Could not generate outro preview: {error}"),
+            }
+        }
+    }
+
+    for interaction in &mut scene.interactions {
+        if interaction.clip.preview_image_path.is_none() {
+            let stem = format!("{poster_seed}-interaction-{}", interaction.id);
+            match generate_preview_image(app, &interaction.clip.file_path, &stem, stamp + 3).await {
+                Ok(path) => interaction.clip.preview_image_path = Some(path),
+                Err(error) => eprintln!("Could not generate interaction preview: {error}"),
             }
         }
     }
@@ -292,10 +318,11 @@ async fn generate_preview_image(
         .to_str()
         .ok_or_else(|| "Preview path could not be encoded.".to_string())?
         .to_string();
-    let quick_look_error = generate_preview_with_quick_look(file_path, &output_preview, stamp).err();
+    let quick_look_error =
+        generate_preview_with_quick_look(file_path, &output_preview, stamp).err();
 
     if !output_preview.exists() {
-        if let Err(ffmpeg_error) = generate_preview_with_ffmpeg(file_path, &output_preview) {
+        if let Err(ffmpeg_error) = generate_preview_with_ffmpeg(app, file_path, &output_preview) {
             return Err(format!(
                 "封面提取失败。Quick Look: {}; ffmpeg: {ffmpeg_error}",
                 quick_look_error.unwrap_or_else(|| "没有生成图片".to_string())
@@ -392,17 +419,39 @@ fn generate_preview_with_quick_look(
     Err("Quick Look is only available on macOS.".into())
 }
 
-fn generate_preview_with_ffmpeg(file_path: &str, output_preview: &Path) -> Result<(), String> {
-    let mut candidates = vec![PathBuf::from("ffmpeg")];
+fn ffmpeg_candidates(_app: &tauri::AppHandle) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
     #[cfg(target_os = "macos")]
     {
-        candidates.insert(0, PathBuf::from("/usr/local/bin/ffmpeg"));
-        candidates.insert(0, PathBuf::from("/opt/homebrew/bin/ffmpeg"));
+        candidates.push(PathBuf::from("/opt/homebrew/bin/ffmpeg"));
+        candidates.push(PathBuf::from("/usr/local/bin/ffmpeg"));
     }
     #[cfg(target_os = "windows")]
     {
-        candidates.insert(0, PathBuf::from("ffmpeg.exe"));
+        if let Ok(path) = _app
+            .path()
+            .resolve("resources/bin/ffmpeg.exe", BaseDirectory::Resource)
+        {
+            candidates.push(path);
+        }
+        if let Ok(exe_path) = std::env::current_exe() {
+            if let Some(exe_dir) = exe_path.parent() {
+                candidates.push(exe_dir.join("resources").join("bin").join("ffmpeg.exe"));
+                candidates.push(exe_dir.join("ffmpeg.exe"));
+            }
+        }
+        candidates.push(PathBuf::from("ffmpeg.exe"));
     }
+    candidates.push(PathBuf::from("ffmpeg"));
+    candidates
+}
+
+fn generate_preview_with_ffmpeg(
+    app: &tauri::AppHandle,
+    file_path: &str,
+    output_preview: &Path,
+) -> Result<(), String> {
+    let candidates = ffmpeg_candidates(app);
     let mut last_error = "ffmpeg is not installed".to_string();
 
     for candidate in candidates {
@@ -415,6 +464,11 @@ fn generate_preview_with_ffmpeg(file_path: &str, output_preview: &Path) -> Resul
                 file_path,
                 "-vf",
                 "scale=720:-1:flags=lanczos",
+                // Keep the alpha plane in the PNG poster. Without an explicit
+                // output format, some FFmpeg builds flatten transparent MOV
+                // pixels to black while extracting the first frame.
+                "-pix_fmt",
+                "rgba",
                 "-frames:v",
                 "1",
             ])
@@ -430,6 +484,158 @@ fn generate_preview_with_ffmpeg(file_path: &str, output_preview: &Path) -> Resul
     }
 
     Err(last_error)
+}
+
+#[cfg(target_os = "windows")]
+fn parse_duration_seconds(log: &str) -> Option<f32> {
+    let start = log.find("Duration:")? + "Duration:".len();
+    let time = log[start..].trim_start().split(',').next()?.trim();
+    let mut parts = time.split(':');
+    let hours = parts.next()?.parse::<f32>().ok()?;
+    let minutes = parts.next()?.parse::<f32>().ok()?;
+    let seconds = parts.next()?.parse::<f32>().ok()?;
+    Some(hours * 3600.0 + minutes * 60.0 + seconds)
+}
+
+#[cfg(target_os = "windows")]
+fn parse_video_size(log: &str) -> Option<(u32, u32)> {
+    for token in log.split(|value: char| value.is_whitespace() || value == ',') {
+        let value = token.trim_matches(|value: char| {
+            !(value.is_ascii_alphanumeric() || value == 'x' || value == 'X')
+        });
+        let Some(separator) = value.find('x').or_else(|| value.find('X')) else {
+            continue;
+        };
+        let width = &value[..separator];
+        let height = &value[separator + 1..];
+        if width.is_empty() || height.is_empty() {
+            continue;
+        }
+        if !width.chars().all(|value| value.is_ascii_digit())
+            || !height.chars().all(|value| value.is_ascii_digit())
+        {
+            continue;
+        }
+        let width = width.parse::<u32>().ok()?;
+        let height = height.parse::<u32>().ok()?;
+        if width >= 16 && height >= 16 {
+            return Some((width, height));
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "windows")]
+fn probe_media_with_ffmpeg(
+    app: &tauri::AppHandle,
+    file_path: &str,
+) -> Result<MediaProbeResult, String> {
+    let mut last_error = "ffmpeg is not installed".to_string();
+
+    for candidate in ffmpeg_candidates(app) {
+        match Command::new(&candidate)
+            .args(["-hide_banner", "-i", file_path])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+        {
+            Ok(output) => {
+                let mut log = String::from_utf8_lossy(&output.stderr).to_string();
+                log.push_str(&String::from_utf8_lossy(&output.stdout));
+                if let (Some(duration_seconds), Some((pixel_width, pixel_height))) =
+                    (parse_duration_seconds(&log), parse_video_size(&log))
+                {
+                    return Ok(MediaProbeResult {
+                        duration_seconds,
+                        pixel_width,
+                        pixel_height,
+                    });
+                }
+                last_error = format!("{} 无法识别视频时长或尺寸", candidate.display());
+            }
+            Err(error) => last_error = format!("{}: {error}", candidate.display()),
+        }
+    }
+
+    Err(format!(
+        "无法读取素材信息，请确认文件是可播放的透明视频：{last_error}"
+    ))
+}
+
+#[cfg(target_os = "windows")]
+async fn convert_mov_to_managed_webm(
+    app: &tauri::AppHandle,
+    source_path: &str,
+    file_id: &str,
+) -> Result<(String, u64, MediaProbeResult), String> {
+    let media_dir = managed_media_dir(app)?;
+    fs::create_dir_all(&media_dir)
+        .await
+        .map_err(|error| format!("Could not create managed media directory: {error}"))?;
+
+    let destination = media_dir.join(format!("{file_id}.webm"));
+    let mut last_error = "ffmpeg is not installed".to_string();
+
+    for candidate in ffmpeg_candidates(app) {
+        match Command::new(&candidate)
+            .args([
+                "-y",
+                "-i",
+                source_path,
+                "-map",
+                "0:v:0",
+                "-an",
+                "-c:v",
+                "libvpx-vp9",
+                "-pix_fmt",
+                "yuva420p",
+                "-auto-alt-ref",
+                "0",
+                "-b:v",
+                "0",
+                "-crf",
+                "18",
+                "-deadline",
+                "good",
+                "-row-mt",
+                "1",
+            ])
+            .arg(&destination)
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .output()
+        {
+            Ok(output) if output.status.success() && destination.exists() => {
+                let metadata = fs::metadata(&destination)
+                    .await
+                    .map_err(|error| format!("无法读取转换后的 WebM：{error}"))?;
+                if metadata.len() == 0 {
+                    last_error = "转换后的 WebM 文件为空".to_string();
+                    continue;
+                }
+                let destination_string = destination
+                    .to_str()
+                    .map(str::to_string)
+                    .ok_or_else(|| "Converted media path could not be encoded.".to_string())?;
+                let probe = probe_media_with_ffmpeg(app, &destination_string)?;
+                return Ok((destination_string, metadata.len(), probe));
+            }
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                let detail = stderr.lines().rev().find(|line| !line.trim().is_empty());
+                last_error = match detail {
+                    Some(line) => format!("{} 转换失败：{}", candidate.display(), line.trim()),
+                    None => format!("{} 转换失败：{}", candidate.display(), output.status),
+                };
+            }
+            Err(error) => last_error = format!("{}: {error}", candidate.display()),
+        }
+    }
+
+    let _ = fs::remove_file(&destination).await;
+    Err(format!(
+        "透明 MOV 自动转换失败，请确认素材带透明通道，或先用转换工具导出 WebM：{last_error}"
+    ))
 }
 
 /// macOS 使用透明 MOV，Windows 使用 VP9-alpha WebM。
@@ -450,9 +656,9 @@ async fn validate_platform_media_input(file_path: &str) -> Result<(u64, String),
     {
         return match format {
             "mov_alpha" => Ok((metadata.len(), format.to_string())),
-            "webm_alpha" => {
-                Err("macOS 版本请导入透明 MOV；WebM 在 macOS WebView 中无法稳定显示透明通道。".into())
-            }
+            "webm_alpha" => Err(
+                "macOS 版本请导入透明 MOV；WebM 在 macOS WebView 中无法稳定显示透明通道。".into(),
+            ),
             _ => Err("不支持的素材格式，请导入透明 MOV。".into()),
         };
     }
@@ -483,6 +689,49 @@ pub async fn import_clip(
     pixel_height: u32,
     preview_image_data_url: Option<&str>,
 ) -> Result<SceneClip, String> {
+    #[cfg(target_os = "windows")]
+    if detect_format(file_path) == "mov_alpha" {
+        let metadata = fs::metadata(file_path)
+            .await
+            .map_err(|_| "The selected file could not be found.".to_string())?;
+        if !metadata.is_file() {
+            return Err("The selected path is not a file.".into());
+        }
+        if metadata.len() == 0 {
+            return Err("The selected file is empty.".into());
+        }
+
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_millis();
+        let id = format!("clip-{stamp}");
+        let stem = Path::new(file_path)
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .unwrap_or("clip");
+        let (managed_file_path, file_size_bytes, probe) =
+            convert_mov_to_managed_webm(app, file_path, &id).await?;
+        // FFmpeg's VP9 decoder drops the alpha plane when it reads the WebM
+        // it just created. Extracting the poster from that file therefore
+        // bakes transparent pixels into black. The source MOV still exposes
+        // its alpha plane to FFmpeg, so use it for the static poster while the
+        // converted WebM remains the clip used during playback.
+        let preview_image_path = Some(generate_preview_image(app, file_path, stem, stamp).await?);
+
+        return Ok(SceneClip {
+            id,
+            file_path: managed_file_path,
+            preview_image_path,
+            format: "webm_alpha".to_string(),
+            duration_seconds: probe.duration_seconds,
+            file_size_bytes,
+            pixel_width: probe.pixel_width,
+            pixel_height: probe.pixel_height,
+            has_transparency: true,
+        });
+    }
+
     let (file_size_bytes, format) = validate_platform_media_input(file_path).await?;
 
     let stamp = SystemTime::now()
@@ -521,6 +770,69 @@ pub async fn import_asset(
     pixel_height: u32,
     preview_image_data_url: Option<&str>,
 ) -> Result<SceneAsset, String> {
+    #[cfg(target_os = "windows")]
+    if detect_format(file_path) == "mov_alpha" {
+        let metadata = fs::metadata(file_path)
+            .await
+            .map_err(|_| "The selected file could not be found.".to_string())?;
+        if !metadata.is_file() {
+            return Err("The selected path is not a file.".into());
+        }
+        if metadata.len() == 0 {
+            return Err("The selected file is empty.".into());
+        }
+
+        let name = Path::new(file_path)
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .unwrap_or("Imported Asset")
+            .to_string();
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_millis();
+        let id = format!("scene-{stamp}");
+        let (file_path_string, file_size_bytes, probe) =
+            convert_mov_to_managed_webm(app, file_path, &format!("{id}-loop")).await?;
+        // See the equivalent clip-import branch above: render the poster from
+        // the MOV so its transparent pixels do not turn into a black preview.
+        let preview_image_path = Some(generate_preview_image(app, file_path, &name, stamp).await?);
+        let loop_clip = scene_clip_from_fields(
+            &id,
+            file_path_string.clone(),
+            preview_image_path.clone(),
+            "webm_alpha".to_string(),
+            probe.duration_seconds,
+            file_size_bytes,
+            probe.pixel_width,
+            probe.pixel_height,
+            true,
+        );
+
+        return Ok(SceneAsset {
+            id,
+            name,
+            file_path: file_path_string,
+            preview_image_path: preview_image_path.clone(),
+            format: "webm_alpha".to_string(),
+            duration_seconds: probe.duration_seconds,
+            file_size_bytes,
+            pixel_width: probe.pixel_width,
+            pixel_height: probe.pixel_height,
+            has_transparency: true,
+            enabled: true,
+            built_in: false,
+            copy_theme: None,
+            cover_image_path: preview_image_path,
+            intro_clip: None,
+            loop_clip,
+            outro_clip: None,
+            interactions: Vec::new(),
+            overlay_style_hint: None,
+            close_button_label: None,
+        });
+    }
+
     let (file_size_bytes, format) = validate_platform_media_input(file_path).await?;
 
     let name = Path::new(file_path)
@@ -568,6 +880,7 @@ pub async fn import_asset(
         intro_clip: None,
         loop_clip,
         outro_clip: None,
+        interactions: Vec::new(),
         overlay_style_hint: None,
         close_button_label: None,
     })

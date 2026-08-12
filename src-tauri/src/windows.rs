@@ -49,14 +49,19 @@ pub fn show_overlay_window(
             .map_err(|error| error.to_string())?;
     }
 
+    window.show().map_err(|error| error.to_string())?;
+    window.set_focus().map_err(|error| error.to_string())?;
+
     #[cfg(target_os = "macos")]
     {
+        // AVPlayerLayer is unreliable when it is attached to a hidden NSWindow
+        // (notably immediately after macOS unlocks).  Present the transparent
+        // overlay first, then attach the player to its live content view.
         crate::native_overlay::sync_overlay_video(app, &window, media)
             .map_err(|error| error.to_string())?;
     }
 
-    window.show().map_err(|error| error.to_string())?;
-    window.set_focus().map_err(|error| error.to_string())
+    Ok(())
 }
 
 fn position_immersive_overlay(window: &WebviewWindow) -> Result<(), String> {
