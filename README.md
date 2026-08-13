@@ -12,8 +12,8 @@ Neko Break 是一个可爱的桌面休息提醒工具。它会按你设置的节
 
 | 平台 / 内容 | 下载文件 | 说明 |
 | --- | --- | --- |
-| macOS Apple Silicon | `Neko.Break_0.1.1_aarch64.dmg` | 适用于 M 系列芯片 Mac |
-| Windows x64 | `Neko.Break_0.1.1_x64-setup.exe` | 适用于 64 位 Windows |
+| macOS Apple Silicon | `Neko.Break_0.1.2_aarch64.dmg` | 适用于 M 系列芯片 Mac |
+| Windows x64 | `Neko.Break_0.1.2_x64-setup.exe` | 适用于 64 位 Windows |
 | MOV 转 WebM 工具 | `Neko.WebM.Converter_0.1.0_x64-setup.exe` | Windows 用户把透明 MOV 转成透明 WebM 时使用 |
 | 透明素材包 | `Neko.Break_Transparent_Cat_Assets_WebM.zip` | 可直接导入 Windows 版的 WebM 透明素材示例 |
 
@@ -43,7 +43,7 @@ Neko Break 当前强调透明背景素材：
 - macOS：推荐导入带 Alpha 通道的 `.mov`
 - Windows：推荐导入带透明通道的 `.webm`
 - 普通视频可以用于全屏休息场景，但不能产生桌面透明悬浮效果
-- 一个场景由循环素材为核心组成，入场和退场素材可以后续补充
+- 一个场景由循环素材为核心组成，入场、退场和可命名互动动作可以后续补充
 
 如果你已经制作好了透明视频：
 
