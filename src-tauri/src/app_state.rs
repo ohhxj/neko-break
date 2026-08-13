@@ -33,4 +33,16 @@ pub struct NativeOverlayState {
     pub outro_player_ptr: usize,
     // 防止入场结束的延迟任务在退场开始后重新点亮循环层。
     pub outro_started: bool,
+    // 互动层随场景一次性预挂载，切换时只翻 opacity，不重建 AVPlayerLayer。
+    pub interactions: Vec<NativeInteractionLayerState>,
+    pub active_interaction_id: Option<String>,
+    pub interaction_request: u64,
+}
+
+#[cfg(target_os = "macos")]
+pub struct NativeInteractionLayerState {
+    pub id: String,
+    pub file_path: String,
+    pub layer_ptr: usize,
+    pub player_ptr: usize,
 }

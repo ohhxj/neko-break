@@ -5,7 +5,7 @@ import { primaryClip, type MediaAsset, type SceneClip, type SceneInteraction } f
 import type { OverlayPlaybackPhase } from "../../domain/breaks/types";
 import type { BreakOutcome } from "../../domain/break-history/types";
 import type { OverlayStyle } from "../../domain/settings/types";
-import { overlayCountdownMode, overlayDismissAction } from "./playback";
+import { overlayCountdownMode, overlayDismissAction, sceneClipsMatchFormat } from "./playback";
 import { useBreakOverlay } from "./useBreakOverlay";
 import { useEffect, useRef, useState } from "react";
 import { Leaf } from "lucide-react";
@@ -102,9 +102,7 @@ export function BreakOverlay({
     !useNativeVideo &&
     !showAnimatedImage &&
     Boolean(asset?.loopClip) &&
-    asset?.loopClip.format === "webm_alpha" &&
-    (!asset?.introClip || asset.introClip.format === "webm_alpha") &&
-    interactions.length === 0;
+    sceneClipsMatchFormat(asset, "webm_alpha");
   const useTransparentImageOverlay =
     !preview && (showAnimatedImage || useNativeVideo || useSeamlessHtmlVideoStack);
   // 当 loop 是 mov_alpha，且 intro/outro 也是 mov_alpha 时，原生侧走多层预热模式。
@@ -113,12 +111,10 @@ export function BreakOverlay({
     !preview &&
     isTauri() &&
     isMacOSRuntime &&
-    asset?.loopClip.format === "mov_alpha" &&
-    (!asset.introClip || asset.introClip.format === "mov_alpha") &&
-      (!asset.outroClip || asset.outroClip.format === "mov_alpha") &&
-    interactions.length === 0 &&
-    Boolean(asset?.introClip || asset?.outroClip);
+    sceneClipsMatchFormat(asset, "mov_alpha") &&
+    Boolean(asset?.introClip || asset?.outroClip || interactions.length > 0);
   const outroVideoRef = useRef<HTMLVideoElement | null>(null);
+  const interactionVideoRefs = useRef(new Map<string, HTMLVideoElement>());
 
   useEffect(() => {
     liveSecondsRef.current = liveSeconds;
@@ -338,11 +334,23 @@ export function BreakOverlay({
 
   useEffect(() => {
     if (!activeInteraction) return;
+    // HTML 叠层模式由真实的 onEnded 返回循环，避免解码耗时侵占动作时长。
+    // 原生 MOV 仍由时长维护前端交互状态，画面切换由预挂载的 AVPlayerLayer 完成。
+    if (useSeamlessHtmlVideoStack) return;
     const timer = window.setTimeout(() => {
       setActiveInteraction(null);
     }, Math.max(100, Math.round(activeInteraction.clip.durationSeconds * 1000)));
     return () => window.clearTimeout(timer);
-  }, [activeInteraction]);
+  }, [activeInteraction, useSeamlessHtmlVideoStack]);
+
+  useEffect(() => {
+    if (preview || !useNativeLayerSequence || !isTauri()) return;
+    if (activeInteraction) {
+      void invoke("play_overlay_interaction", { interactionId: activeInteraction.id }).catch(() => undefined);
+      return;
+    }
+    void invoke("stop_overlay_interaction").catch(() => undefined);
+  }, [activeInteraction?.id, preview, useNativeLayerSequence]);
 
   useEffect(() => {
     if (preview || !isTauri()) return;
@@ -491,7 +499,7 @@ export function BreakOverlay({
                   playsInline
                   preload={VIDEO_STACK_PRELOAD}
                   className="overlay__video-stack-layer"
-                  style={{ opacity: phase === "intro" && asset.introClip ? 0 : 1 }}
+                  style={{ opacity: (phase === "intro" && asset.introClip) || activeInteraction ? 0 : 1 }}
                 />
                 {asset.introClip ? (
                   <video
@@ -533,6 +541,27 @@ export function BreakOverlay({
                     }}
                   />
                 ) : null}
+                {interactions.map((interaction) => (
+                  <video
+                    key={`${asset.id}-interaction-${interaction.id}-${interaction.clip.filePath}`}
+                    ref={(node) => {
+                      if (node) interactionVideoRefs.current.set(interaction.id, node);
+                      else interactionVideoRefs.current.delete(interaction.id);
+                    }}
+                    src={toMediaUrl(interaction.clip.filePath)}
+                    muted
+                    playsInline
+                    preload={VIDEO_STACK_PRELOAD}
+                    className="overlay__video-stack-layer"
+                    style={{
+                      opacity: activeInteraction?.id === interaction.id ? 1 : 0,
+                      pointerEvents: "none"
+                    }}
+                    onEnded={() => {
+                      setActiveInteraction((current) => current?.id === interaction.id ? null : current);
+                    }}
+                  />
+                ))}
               </div>
             ) : effectiveClip.filePath ? (
               <video
@@ -612,7 +641,25 @@ export function BreakOverlay({
               role="menuitem"
               key={interaction.id}
               onClick={() => {
-                setActiveInteraction(interaction);
+                const video = interactionVideoRefs.current.get(interaction.id);
+                const activate = () => {
+                  setActiveInteraction(interaction);
+                  if (!video) return;
+                  try {
+                    video.currentTime = 0;
+                  } catch {
+                    /* 元数据尚未就绪时，play 会从默认起点开始。 */
+                  }
+                  void video.play().catch(() => {
+                    setActiveInteraction((current) => current?.id === interaction.id ? null : current);
+                  });
+                };
+                if (video && video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+                  video.addEventListener("loadeddata", activate, { once: true });
+                  video.load();
+                } else {
+                  activate();
+                }
                 setInteractionMenu(null);
               }}
             >

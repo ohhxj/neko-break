@@ -35,6 +35,7 @@ import { RestHistoryPanel } from "../features/dashboard/RestHistoryPanel";
 import { SettingsScreen } from "../features/settings/SettingsScreen";
 import { MediaLibraryScreen, type SceneDraft } from "../features/media-library/MediaLibraryScreen";
 import { BreakOverlay } from "../features/overlay/BreakOverlay";
+import { sceneClipsMatchFormat } from "../features/overlay/playback";
 import supportCoffeeCat from "../assets/decor/support-coffee-cat.png";
 import footerSleepingCat from "../assets/decor/footer-sleeping-cat.png";
 import alipayQr from "../assets/support/alipay-qr.png";
@@ -117,11 +118,8 @@ export function App() {
     // intro→loop、loop→outro 都只翻 layer opacity，不在衔接点重建播放器。
     const useNativeLayerSequence =
       isMacOSRuntime &&
-      asset?.loopClip.format === "mov_alpha" &&
-      (!asset.introClip || asset.introClip.format === "mov_alpha") &&
-      (!asset.outroClip || asset.outroClip.format === "mov_alpha") &&
-      !(asset.interactions?.length) &&
-      Boolean(asset.introClip || asset.outroClip);
+      sceneClipsMatchFormat(asset, "mov_alpha") &&
+      Boolean(asset?.introClip || asset?.outroClip || asset?.interactions?.length);
     const nativeMedia = useNativeLayerSequence
       ? {
           filePath: null,
@@ -136,7 +134,12 @@ export function App() {
           loopFormat: asset!.loopClip.format,
           outroFilePath: asset!.outroClip?.filePath ?? null,
           outroFormat: asset!.outroClip?.format ?? null,
-          outroDurationMs: asset!.outroClip ? Math.max(0, Math.round(asset!.outroClip.durationSeconds * 1000)) : null
+          outroDurationMs: asset!.outroClip ? Math.max(0, Math.round(asset!.outroClip.durationSeconds * 1000)) : null,
+          interactions: (asset!.interactions ?? []).map((interaction) => ({
+            id: interaction.id,
+            filePath: interaction.clip.filePath,
+            format: interaction.clip.format
+          }))
         }
       : initialClip && initialClip.format === "mov_alpha"
       ? {

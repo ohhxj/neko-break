@@ -67,6 +67,8 @@ fn main() {
             commands::window::hide_overlay,
             commands::window::hide_overlay_silently,
             commands::window::play_overlay_outro,
+            commands::window::play_overlay_interaction,
+            commands::window::stop_overlay_interaction,
             commands::window::update_overlay_media,
             commands::window::update_tray_tooltip,
             commands::window::update_tray_title,

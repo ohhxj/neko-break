@@ -1,4 +1,5 @@
 import type { OverlayPlaybackPhase } from "../../domain/breaks/types";
+import type { MediaAsset, MediaFormat } from "../../domain/media/types";
 
 export type OverlayDismissAction = "ignore" | "play_outro" | "close";
 export type OverlayCountdownMode = "opening" | "compact" | "ending";
@@ -28,3 +29,14 @@ export const overlayDismissAction = (
   }
   return hasOutro ? "play_outro" : "close";
 };
+
+export const sceneClipsMatchFormat = (
+  asset: MediaAsset | null | undefined,
+  format: MediaFormat
+) => Boolean(
+  asset &&
+  asset.loopClip.format === format &&
+  (!asset.introClip || asset.introClip.format === format) &&
+  (!asset.outroClip || asset.outroClip.format === format) &&
+  (asset.interactions ?? []).every((interaction) => interaction.clip.format === format)
+);
