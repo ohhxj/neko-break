@@ -90,6 +90,12 @@ Neko Break 当前强调透明背景素材：
 
 想把自己的猫咪、狗狗或其他宠物做成桌面陪伴素材，可以跟着视频一步步制作：
 
+<p align="center">
+  <a href="https://www.douyin.com/video/7668679713916783914">
+    <img src="docs/images/neko-break-pet-tutorial.png" alt="桌宠小猫素材制作抖音视频教程" width="560" />
+  </a>
+</p>
+
 **[在抖音观看教程：制作自己的桌宠素材](https://www.douyin.com/video/7668679713916783914)**
 
 如果这份教程对你有帮助，欢迎在抖音给视频点个赞，也可以顺手收藏，方便制作素材时随时回来查看。你做出了自己的电子小宠物，也欢迎分享到共创群里。
