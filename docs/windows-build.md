@@ -16,6 +16,14 @@ npm run test
 npm run tauri:build:windows
 ```
 
+The build downloads the pinned LGPL FFmpeg archive declared in
+`scripts/ffmpeg-windows.json`, verifies both the archive and extracted files with SHA-256, and
+places `ffmpeg.exe` plus its license under `src-tauri/resources/bin/`. These generated files are
+intentionally excluded from Git and bundled into the installer by Tauri.
+
+The pinned source, checksums, and redistribution notice are documented in
+[`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md).
+
 The Windows installers are written under:
 
 ```text
@@ -25,7 +33,8 @@ src-tauri\target\release\bundle\msi
 
 ## Windows Media Policy
 
-- Import VP9-alpha `.webm` files.
+- Import VP9-alpha `.webm` files directly, or import transparent `.mov` files and let the bundled
+  FFmpeg worker convert them to VP9-alpha WebM in the background.
 - A scene still consists of a required loop clip plus optional intro and outro clips.
 - Imported clips and generated PNG covers are copied into the app config directory, so normal installer upgrades preserve them.
 - The bundled Windows preset resolves `cat-intro.webm` and `cat-loop.webm`; macOS continues to resolve the matching `.mov` resources.
