@@ -2,10 +2,18 @@
 
 这个版本完善了休息倒计时、互动场景以及 Windows 素材导入体验。
 
-## 下载
+## 应该下载哪个文件？
 
-- macOS Apple Silicon: `Neko.Break_0.1.2_aarch64.dmg`
-- Windows x64: `Neko.Break_0.1.2_x64-setup.exe`
+安装 Neko Break 时，只需要下载与你电脑系统对应的安装包；素材包和转换器都是可选内容。
+
+| 你的需求 | 下载文件 | 适用情况 |
+| --- | --- | --- |
+| 在 Mac 上安装 Neko Break | `Neko.Break_0.1.2_aarch64.dmg` | 适用于 Apple Silicon 芯片的 Mac，包括 M1、M2、M3、M4 等；当前未提供 Intel Mac 安装包 |
+| 在 Windows 上安装 Neko Break | `Neko.Break_0.1.2_x64-setup.exe` | 适用于 64 位 Windows 10 / 11；安装包已内置 FFmpeg，普通用户下载这个文件即可 |
+| 下载免费透明猫咪素材 | `Neko.Break_Transparent_Cat_Assets_WebM.zip` | 主要供 Windows 版使用；解压后把其中的 WebM 文件导入场景库 |
+| 单独转换 MOV 素材 | `Neko.WebM.Converter_0.1.0_x64-setup.exe` | 可选的 Windows 转换工具，适合在应用外把透明 MOV 转成 WebM；正常在 Neko Break 中导入 MOV 时不需要下载 |
+
+> Mac 用户下载 `.dmg`，Windows 用户下载名称中带 `x64-setup.exe` 的安装包。不要把素材包或转换器当成主程序安装包。
 
 ## 主要更新
 
