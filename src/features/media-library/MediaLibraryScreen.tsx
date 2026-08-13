@@ -45,6 +45,7 @@ type Props = {
   onDeleteScene: (asset: MediaAsset) => Promise<void> | void;
   onSupportAuthor?: () => void;
   importError: string | null;
+  importStatus: string | null;
   onRenameScene: (asset: MediaAsset, name: string) => Promise<void>;
   onUpdateSceneMeta: (
     asset: MediaAsset,
@@ -113,6 +114,7 @@ export function MediaLibraryScreen({
   onDeleteScene,
   onSupportAuthor,
   importError,
+  importStatus,
   onRenameScene,
   onUpdateSceneMeta,
   onAssignClip,
@@ -218,6 +220,7 @@ export function MediaLibraryScreen({
         </div>
       </div>
 
+      {importStatus ? <p className="info-text" role="status">{importStatus}</p> : null}
       {importError ? <p className="error-text">{importError}</p> : null}
 
       {libraryOpen ? (
@@ -438,6 +441,7 @@ export function MediaLibraryScreen({
         <CreateSceneModal
           onClose={() => setCreateOpen(false)}
           onImportClip={onImportClip}
+          importStatus={importStatus}
           onCreate={async (draft) => {
             const scene = await onCreateScene(draft);
             setFocusedAssetId(scene.id);
@@ -656,10 +660,12 @@ export function SceneEditor({
 function CreateSceneModal({
   onClose,
   onImportClip,
+  importStatus,
   onCreate
 }: {
   onClose: () => void;
   onImportClip: () => Promise<SceneClip | null>;
+  importStatus: string | null;
   onCreate: (draft: SceneDraft) => Promise<void>;
 }) {
   const [sceneName, setSceneName] = useState("");
@@ -750,6 +756,7 @@ function CreateSceneModal({
         </section>
 
         <section className="scene-create-section scene-create-materials">
+          {importStatus ? <p className="info-text" role="status">{importStatus}</p> : null}
           <div className="scene-create-section__heading">
             <strong>场景素材</strong>
           </div>
@@ -813,7 +820,7 @@ function CreateSceneModal({
               ) : (
                 <button type="button" className="scene-upload-empty" disabled={busy} onClick={() => void importForActiveSlot()}>
                   <span className="scene-upload-empty__icon" aria-hidden="true">＋</span>
-                  <strong>{busy ? "正在导入…" : `选择${activeSlot === "loop" ? "循环" : activeSlot === "intro" ? "入场" : "退场"}视频`}</strong>
+                  <strong>{busy ? "正在导入并处理素材…" : `选择${activeSlot === "loop" ? "循环" : activeSlot === "intro" ? "入场" : "退场"}视频`}</strong>
                   <small>{activeSlot === "loop" ? "循环素材是创建场景的必需内容" : "可以稍后补充此阶段素材"}</small>
                 </button>
               )}

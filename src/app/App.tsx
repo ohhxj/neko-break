@@ -93,6 +93,7 @@ export function App() {
   const [setupComplete, setSetupComplete] = useState(true);
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
+  const [importStatus, setImportStatus] = useState<string | null>(null);
   const [supportAuthorOpen, setSupportAuthorOpen] = useState(false);
   const [breakHistory, setBreakHistory] = useState<BreakRecord[]>([]);
   const [overlayPayload, setOverlayPayload] = useState<OverlayPayload>({
@@ -306,7 +307,12 @@ export function App() {
     if (!selected || Array.isArray(selected)) return null;
     const isWindowsMov = isWindowsRuntime && selected.toLowerCase().endsWith(".mov");
     if (isWindowsMov) {
-      return mediaStore.importClip(selected, 0, 0, 0, null);
+      setImportStatus("正在将 MOV 转换为 Windows 可播放的 WebM，请勿关闭程序…");
+      try {
+        return await mediaStore.importClip(selected, 0, 0, 0, null);
+      } finally {
+        setImportStatus(null);
+      }
     }
     const { durationSeconds, pixelWidth, pixelHeight } = await probeMediaFile(selected);
     const previewImageDataUrl = isWindowsRuntime ? await captureVideoPoster(selected) : null;
@@ -665,6 +671,7 @@ export function App() {
               onDeleteScene={(asset) => void deleteScene(asset)}
               onSupportAuthor={() => setSupportAuthorOpen(true)}
               importError={importError}
+              importStatus={importStatus}
               onAssignClip={async (asset, slot) => {
                 try {
                   setImportError(null);

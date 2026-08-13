@@ -1,5 +1,7 @@
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde::{Deserialize, Serialize};
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -446,6 +448,18 @@ fn ffmpeg_candidates(_app: &tauri::AppHandle) -> Vec<PathBuf> {
     candidates
 }
 
+/// FFmpeg is a background worker for imports, never an interactive console. On Windows the
+/// default child-process flags can briefly create a blank console window; closing it terminates
+/// the conversion and therefore interrupts the import.
+#[cfg(target_os = "windows")]
+fn configure_background_command(command: &mut Command) {
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    command.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(target_os = "windows"))]
+fn configure_background_command(_command: &mut Command) {}
+
 fn generate_preview_with_ffmpeg(
     app: &tauri::AppHandle,
     file_path: &str,
@@ -455,7 +469,9 @@ fn generate_preview_with_ffmpeg(
     let mut last_error = "ffmpeg is not installed".to_string();
 
     for candidate in candidates {
-        match Command::new(&candidate)
+        let mut command = Command::new(&candidate);
+        configure_background_command(&mut command);
+        match command
             .args([
                 "-y",
                 "-ss",
@@ -533,7 +549,9 @@ fn probe_media_with_ffmpeg(
     let mut last_error = "ffmpeg is not installed".to_string();
 
     for candidate in ffmpeg_candidates(app) {
-        match Command::new(&candidate)
+        let mut command = Command::new(&candidate);
+        configure_background_command(&mut command);
+        match command
             .args(["-hide_banner", "-i", file_path])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -577,7 +595,9 @@ async fn convert_mov_to_managed_webm(
     let mut last_error = "ffmpeg is not installed".to_string();
 
     for candidate in ffmpeg_candidates(app) {
-        match Command::new(&candidate)
+        let mut command = Command::new(&candidate);
+        configure_background_command(&mut command);
+        match command
             .args([
                 "-y",
                 "-i",
