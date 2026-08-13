@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
+    "prepare:ffmpeg:windows": "node scripts/prepare-windows-ffmpeg.mjs",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
     "tauri:dev:windows": "tauri dev --config src-tauri/tauri.windows.conf.json",

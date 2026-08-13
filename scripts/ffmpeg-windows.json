@@ -1,0 +1,10 @@
+{
+  "release": "autobuild-2026-08-12-13-15",
+  "archiveName": "ffmpeg-N-126086-ge5ecfe8970-win64-lgpl.zip",
+  "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-08-12-13-15/ffmpeg-N-126086-ge5ecfe8970-win64-lgpl.zip",
+  "archiveSha256": "3fe180f31a12a1de60568cdcf72210a1d3f475f5f88719afdd6c7012e13f6d3e",
+  "ffmpegSha256": "cddcb6b8d512fa882c8dd764764ac45443ac5c5d824ef67921131c7f8c09b1e0",
+  "licenseSha256": "da7eabb7bafdf7d3ae5e9f223aa5bdc1eece45ac569dc21b3b037520b4464768",
+  "buildSource": "https://github.com/BtbN/FFmpeg-Builds/releases/tag/autobuild-2026-08-12-13-15",
+  "ffmpegSource": "https://github.com/FFmpeg/FFmpeg/tree/e5ecfe8970"
+}

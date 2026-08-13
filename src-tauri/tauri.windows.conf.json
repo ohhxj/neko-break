@@ -3,7 +3,7 @@
   "productName": "Neko Break",
   "identifier": "com.reshui.mac-break-reminder",
   "build": {
-    "beforeBuildCommand": "npm run build"
+    "beforeBuildCommand": "npm run prepare:ffmpeg:windows && npm run build"
   },
   "app": {
     "windows": [
@@ -38,6 +38,8 @@
     ],
     "resources": [
       "resources/bin/ffmpeg.exe",
+      "resources/bin/FFmpeg-LICENSE.txt",
+      "resources/bin/FFmpeg-NOTICE.txt",
       "resources/presets/*"
     ],
     "icon": [
