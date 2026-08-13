@@ -1,8 +1,21 @@
 import { describe, expect, it } from "vitest";
 import {
   overlayCountdownMode,
-  overlayDismissAction
+  overlayDismissAction,
+  sceneClipsMatchFormat
 } from "../../src/features/overlay/playback";
+import type { MediaAsset, MediaFormat } from "../../src/domain/media/types";
+
+const sceneWithFormats = (loop: MediaFormat, interactions: MediaFormat[]): MediaAsset => ({
+  loopClip: { format: loop },
+  introClip: null,
+  outroClip: null,
+  interactions: interactions.map((format, index) => ({
+    id: `interaction-${index}`,
+    name: `Interaction ${index}`,
+    clip: { format }
+  }))
+} as MediaAsset);
 
 describe("overlayCountdownMode", () => {
   it("shows the full card for the first five seconds", () => {
@@ -36,5 +49,16 @@ describe("overlayDismissAction", () => {
   it("closes immediately when the scene has no outro", () => {
     expect(overlayDismissAction("intro", false, false)).toBe("close");
     expect(overlayDismissAction("loop", false, false)).toBe("close");
+  });
+});
+
+describe("sceneClipsMatchFormat", () => {
+  it("keeps seamless playback enabled when interactions use the same format", () => {
+    expect(sceneClipsMatchFormat(sceneWithFormats("webm_alpha", ["webm_alpha"]), "webm_alpha")).toBe(true);
+    expect(sceneClipsMatchFormat(sceneWithFormats("mov_alpha", ["mov_alpha"]), "mov_alpha")).toBe(true);
+  });
+
+  it("rejects a mixed-format interaction stack", () => {
+    expect(sceneClipsMatchFormat(sceneWithFormats("mov_alpha", ["webm_alpha"]), "mov_alpha")).toBe(false);
   });
 });

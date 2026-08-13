@@ -169,6 +169,26 @@ pub fn play_overlay_outro(app: &tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+pub fn play_overlay_interaction(
+    app: &tauri::AppHandle,
+    interaction_id: &str,
+) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        crate::native_overlay::play_overlay_interaction(app, interaction_id)
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+pub fn stop_overlay_interaction(app: &tauri::AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        crate::native_overlay::stop_overlay_interaction(app).map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
 pub fn update_overlay_media(
     app: &tauri::AppHandle,
     media: Option<&NativeOverlayMedia>,

@@ -4,6 +4,14 @@ use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct NativeOverlayInteraction {
+    pub id: String,
+    pub file_path: String,
+    pub format: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct NativeOverlayMedia {
     // 旧字段：单层模式，update_overlay_media 在 phase 切换时也复用。
     pub file_path: Option<String>,
@@ -21,6 +29,8 @@ pub struct NativeOverlayMedia {
     pub outro_file_path: Option<String>,
     pub outro_format: Option<String>,
     pub outro_duration_ms: Option<u64>,
+    #[serde(default)]
+    pub interactions: Vec<NativeOverlayInteraction>,
 }
 
 #[tauri::command]
@@ -45,6 +55,19 @@ pub fn hide_overlay_silently(app: tauri::AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub fn play_overlay_outro(app: tauri::AppHandle) -> Result<(), String> {
     windows::play_overlay_outro(&app)
+}
+
+#[tauri::command]
+pub fn play_overlay_interaction(
+    app: tauri::AppHandle,
+    interaction_id: String,
+) -> Result<(), String> {
+    windows::play_overlay_interaction(&app, &interaction_id)
+}
+
+#[tauri::command]
+pub fn stop_overlay_interaction(app: tauri::AppHandle) -> Result<(), String> {
+    windows::stop_overlay_interaction(&app)
 }
 
 #[tauri::command]
