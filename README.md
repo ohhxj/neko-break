@@ -10,10 +10,10 @@ Neko Break 是一款支持 macOS 和 Windows 的桌面休息提醒工具。它�
   <img src="docs/images/neko-break-dashboard.png" alt="Neko Break 主界面：休息倒计时、提醒规则、休息记录、实时预览和场景库" width="900" />
 </p>
 
-## v0.1.2 新功能
+## v0.1.3 新功能
 
 - 循环场景支持添加并命名多个互动动作，休息弹窗中右键即可触发
-- 互动动作结束后自动回到默认循环，并通过预加载切换避免闪白和素材中断
+- 互动动作结束后从默认循环的开头恢复，并等待首帧就绪后再切换，避免闪白和素材中断
 - Windows 可以直接导入 MOV，由应用内置 FFmpeg 在后台转换，不再需要用户单独安装 FFmpeg
 - 优化休息倒计时恢复逻辑，并修复托盘菜单更新可能导致的卡顿与崩溃
 
@@ -25,8 +25,8 @@ Neko Break 是一款支持 macOS 和 Windows 的桌面休息提醒工具。它�
 
 | 平台 / 内容 | 下载文件 | 说明 |
 | --- | --- | --- |
-| macOS Apple Silicon | `Neko.Break_0.1.2_aarch64.dmg` | 适用于 M 系列芯片 Mac |
-| Windows x64 | `Neko.Break_0.1.2_x64-setup.exe` | 适用于 64 位 Windows |
+| macOS Apple Silicon | `Neko.Break_0.1.3_aarch64.dmg` | 适用于 M 系列芯片 Mac |
+| Windows x64 | `Neko.Break_0.1.2_x64-setup.exe` | 适用于 64 位 Windows；当前最新 Windows 版本仍为 [v0.1.2](https://github.com/ohhxj/neko-break/releases/tag/v0.1.2) |
 | MOV 转 WebM 工具（可选） | `Neko.WebM.Converter_0.1.0_x64-setup.exe` | 需要在应用外批量转换素材时使用 |
 | 透明素材包 | `Neko.Break_Transparent_Cat_Assets_WebM.zip` | 可直接导入 Windows 版的 WebM 透明素材示例 |
 
