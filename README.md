@@ -26,7 +26,7 @@ Neko Break 是一款支持 macOS 和 Windows 的桌面休息提醒工具。它�
 | 平台 / 内容 | 下载文件 | 说明 |
 | --- | --- | --- |
 | macOS Apple Silicon | `Neko.Break_0.1.3_aarch64.dmg` | 适用于 M 系列芯片 Mac |
-| Windows x64 | `Neko.Break_0.1.2_x64-setup.exe` | 适用于 64 位 Windows；当前最新 Windows 版本仍为 [v0.1.2](https://github.com/ohhxj/neko-break/releases/tag/v0.1.2) |
+| Windows x64 | `Neko.Break_0.1.3_x64-setup.exe` | 适用于 64 位 Windows 10 / 11，已内置 FFmpeg |
 | MOV 转 WebM 工具（可选） | `Neko.WebM.Converter_0.1.0_x64-setup.exe` | 需要在应用外批量转换素材时使用 |
 | 透明素材包 | `Neko.Break_Transparent_Cat_Assets_WebM.zip` | 可直接导入 Windows 版的 WebM 透明素材示例 |
 
