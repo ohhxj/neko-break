@@ -113,8 +113,38 @@ export function BreakOverlay({
     isMacOSRuntime &&
     sceneClipsMatchFormat(asset, "mov_alpha") &&
     Boolean(asset?.introClip || asset?.outroClip || interactions.length > 0);
+  const loopVideoRef = useRef<HTMLVideoElement | null>(null);
   const outroVideoRef = useRef<HTMLVideoElement | null>(null);
   const interactionVideoRefs = useRef(new Map<string, HTMLVideoElement>());
+
+  const returnToHtmlLoopStart = (interactionId: string) => {
+    const loopVideo = loopVideoRef.current;
+    if (!loopVideo) {
+      setActiveInteraction((current) => current?.id === interactionId ? null : current);
+      return;
+    }
+
+    const revealRestartedLoop = () => {
+      void loopVideo.play().catch(() => undefined).finally(() => {
+        setActiveInteraction((current) => current?.id === interactionId ? null : current);
+      });
+    };
+
+    loopVideo.pause();
+    if (loopVideo.currentTime <= 0.01 && loopVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+      revealRestartedLoop();
+      return;
+    }
+
+    const handleSeeked = () => revealRestartedLoop();
+    loopVideo.addEventListener("seeked", handleSeeked, { once: true });
+    try {
+      loopVideo.currentTime = 0;
+    } catch {
+      loopVideo.removeEventListener("seeked", handleSeeked);
+      revealRestartedLoop();
+    }
+  };
 
   useEffect(() => {
     liveSecondsRef.current = liveSeconds;
@@ -492,6 +522,7 @@ export function BreakOverlay({
               <div className="overlay__video-stack">
                 <video
                   key={`${asset.id}-loop-${asset.loopClip.filePath}`}
+                  ref={loopVideoRef}
                   src={toMediaUrl(asset.loopClip.filePath)}
                   autoPlay
                   loop
@@ -558,7 +589,7 @@ export function BreakOverlay({
                       pointerEvents: "none"
                     }}
                     onEnded={() => {
-                      setActiveInteraction((current) => current?.id === interaction.id ? null : current);
+                      returnToHtmlLoopStart(interaction.id);
                     }}
                   />
                 ))}

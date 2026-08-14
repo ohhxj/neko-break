@@ -452,19 +452,39 @@ pub fn play_overlay_interaction(
 
 #[cfg(target_os = "macos")]
 pub fn stop_overlay_interaction(app: &tauri::AppHandle) -> tauri::Result<()> {
-    {
+    let (request, had_active_interaction) = {
         let state = app.state::<AppState>();
         let mut overlay = state
             .native_overlay
             .lock()
             .expect("native overlay mutex poisoned");
+        let had_active_interaction = overlay.active_interaction_id.is_some();
         overlay.interaction_request = overlay.interaction_request.wrapping_add(1);
         overlay.active_interaction_id = None;
+        (overlay.interaction_request, had_active_interaction)
+    };
+    if !had_active_interaction {
+        return Ok(());
     }
+
     let app_handle = app.clone();
     app.run_on_main_thread(move || unsafe {
-        hide_overlay_interaction(&app_handle);
-    })
+        prepare_loop_restart(&app_handle, request);
+    })?;
+
+    // 互动最后一帧继续遮住底层，等循环播放器确实回到开头并可显示后再翻转图层。
+    let app_for_ready = app.clone();
+    tauri::async_runtime::spawn(async move {
+        for _ in 0..120 {
+            tokio::time::sleep(std::time::Duration::from_millis(16)).await;
+            let app_for_main = app_for_ready.clone();
+            let _ = app_for_ready.run_on_main_thread(move || unsafe {
+                reveal_restarted_loop_if_ready(&app_for_main, request);
+            });
+        }
+    });
+
+    Ok(())
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -547,30 +567,63 @@ unsafe fn reveal_overlay_interaction_if_ready(app: &tauri::AppHandle, request: u
 }
 
 #[cfg(target_os = "macos")]
-unsafe fn hide_overlay_interaction(app: &tauri::AppHandle) {
+unsafe fn prepare_loop_restart(app: &tauri::AppHandle, request: u64) {
     let state = app.state::<AppState>();
     let overlay = state
         .native_overlay
         .lock()
         .expect("native overlay mutex poisoned");
+    if overlay.interaction_request != request
+        || overlay.active_interaction_id.is_some()
+        || overlay.outro_started
+        || overlay.player_ptr == 0
+    {
+        return;
+    }
 
+    let loop_player = &*(overlay.player_ptr as *mut AVQueuePlayer);
+    loop_player.pause();
+    loop_player.seekToTime(CMTime::new(0, 600));
+}
+
+#[cfg(target_os = "macos")]
+unsafe fn reveal_restarted_loop_if_ready(app: &tauri::AppHandle, request: u64) {
+    let state = app.state::<AppState>();
+    let mut overlay = state
+        .native_overlay
+        .lock()
+        .expect("native overlay mutex poisoned");
+    if overlay.interaction_request != request
+        || overlay.active_interaction_id.is_some()
+        || overlay.outro_started
+        || overlay.layer_ptr == 0
+        || overlay.player_ptr == 0
+    {
+        return;
+    }
+
+    let loop_layer = &*(overlay.layer_ptr as *mut AVPlayerLayer);
+    let loop_player = &*(overlay.player_ptr as *mut AVQueuePlayer);
+    let current_seconds = loop_player.currentTime().seconds();
+    if !current_seconds.is_finite()
+        || current_seconds.abs() > 0.05
+        || !loop_layer.isReadyForDisplay()
+    {
+        return;
+    }
     CATransaction::begin();
     CATransaction::setDisableActions(true);
-    if overlay.layer_ptr != 0 && !overlay.outro_started {
-        let loop_layer = &*(overlay.layer_ptr as *mut AVPlayerLayer);
-        loop_layer.setOpacity(1.0);
-        if overlay.player_ptr != 0 {
-            let loop_player = &*(overlay.player_ptr as *mut AVQueuePlayer);
-            loop_player.play();
-        }
-    }
+    loop_layer.setOpacity(1.0);
     for interaction in &overlay.interactions {
         let layer = &*(interaction.layer_ptr as *mut AVPlayerLayer);
         layer.setOpacity(0.0);
         let player = &*(interaction.player_ptr as *mut AVQueuePlayer);
         player.pause();
     }
+    loop_player.play();
     CATransaction::commit();
+    // 让后续轮询失效，避免对同一次返回循环重复执行图层切换。
+    overlay.interaction_request = overlay.interaction_request.wrapping_add(1);
 }
 
 #[cfg(not(target_os = "macos"))]
